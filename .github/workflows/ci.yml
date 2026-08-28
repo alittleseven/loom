@@ -1,0 +1,24 @@
+name: CI
+
+# N4：CI = Windows 单平台（唯一目标平台）+ 配置-实现一致性检查
+# （一致性检查在 tests/test_consumption.py 内随 pytest 执行）
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 安装
+        run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check .
+      - name: 测试（core 表驱动 / settle 故障注入 / prep 快照 / 长路径 / 配置一致性）
+        run: pytest -q
