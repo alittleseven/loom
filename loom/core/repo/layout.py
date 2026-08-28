@@ -13,6 +13,7 @@ from loom.core.repo.schema import (
     BookConfig,
     GenreProfileFM,
 )
+from loom.core.seam import assert_seam
 
 ROOT_DIRS = (
     "定稿/正文",
@@ -101,7 +102,9 @@ class BookRepo:
         self.port.write_text(rel, content)
 
     def read_fm(self, rel: str) -> tuple[dict, str]:
-        return split(self.port.read_text(rel))
+        fm, body = split(self.port.read_text(rel))
+        assert_seam(fm)  # 缝协议版本嗅探：不匹配显式降级，不静默错读（§2.7）
+        return fm, body
 
     # ---- 条目 ----
 

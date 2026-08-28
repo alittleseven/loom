@@ -92,18 +92,11 @@ def _entries_top(entries: dict, n: int = 5) -> list[str]:
     return [f"{e.id}（{e.kind}/{e.strength}，期限章 {e.due_ch or '无'}）" for e in active[:n]]
 
 
-def _book_map(repo: BookRepo, entries: dict) -> str:
-    lines = ["[Book Map·骨架版]"]
-    for rel in sorted(repo.port.list_files("大纲/卷纲")):
-        if rel.endswith(".md"):
-            fm, _ = split(repo.port.read_text(rel))
-            lines.append(f"- 卷{fm.get('vol')}：高潮点 {fm.get('climax_chapters', [])}，"
-                         f"时间跨度 {fm.get('time_span', {}).get('start', '?')}→{fm.get('time_span', {}).get('end', '?')}")
-            break  # 骨架版只挂当前卷（最早卷号，sorted 保证确定性）
-    top = _entries_top(entries, 5)
-    if top:
-        lines.append(f"- 活跃条目 Top：{'；'.join(top)}")
-    return "\n".join(lines)
+def _book_map(repo: BookRepo, chapter: int, entries: dict) -> str:
+    """Book Map 完整版（审阅报告 I：替换只挂最早卷号的骨架版）。"""
+    from loom.enhance import book_map_full
+
+    return book_map_full(repo, chapter, entries=entries)
 
 
 def compile_pack(
@@ -137,7 +130,7 @@ def compile_pack(
         "style": f"[风格段]\n{style_summary}\n同场景金句示例：\n" + "\n".join(
             f"- {ln}" for ln in _load_active_golden_lines(repo, scenario)),
         "contract": "[合同段·本章必须兑现]\n" + "\n".join(f"- {c}" for c in contract),
-        "bookmap": _book_map(repo, entries),
+        "bookmap": _book_map(repo, chapter, entries),
         "facts": "[事实切片·本章出场实体]\n" + ("\n".join(f"- {f}" for f in facts) or "- （未命中触发器）"),
         "recent": "[近期段]\n" + ("\n".join(_recent_summaries(repo, chapter)) or "- （开局章）"),
         "entries": "[反复读清单·活跃条目]\n" + ("\n".join(f"- {t}" for t in _entries_top(entries)) or "- （无）"),

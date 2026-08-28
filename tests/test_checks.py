@@ -215,6 +215,21 @@ def test_gate5_overdue_uncovered():
     assert not [i for i in run_plan_gates(vol2, entries, _profile(), []) if i.rule == "gate5_overdue"]
 
 
+def test_gate5_waiver_must_bind_entry():
+    """审阅报告 F：豁免须 target 绑定具体条目，一条豁免不再豁免全部超期条目。"""
+    entries = {"F-000": EntryFM(id="F-000", kind="伏笔", strength="high", status="active",
+                                opened_ch=1, due_ch=3)}
+    # 无 target 的计划级豁免 → 仍然拦截
+    vol0 = _vol(start_ch=10, end_ch=40, waivers=[
+        {"reason": "本卷不兑付", "approved_by": "author", "source": "vol_outline"}])
+    blocks0 = [i for i in run_plan_gates(vol0, entries, _profile(), []) if i.rule == "gate5_overdue"]
+    assert blocks0 and "未绑定" in blocks0[0].msg
+    # target 绑定 F-000 → 豁免生效
+    vol1 = _vol(start_ch=10, end_ch=40, waivers=[
+        {"reason": "顺延到二卷", "approved_by": "author", "source": "vol_outline", "target": "F-000"}])
+    assert not [i for i in run_plan_gates(vol1, entries, _profile(), []) if i.rule == "gate5_overdue"]
+
+
 def test_gate6_ratio_redline():
     types = {f"ch{i:04d}": "main" for i in range(1, 9)}
     for i in range(1, 5):

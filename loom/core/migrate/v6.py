@@ -137,17 +137,17 @@ def migrate(source: Path | str, target: Path | str, genre: str, *,
                 report.todo.append(f"条目 {eid}：来自 {beat.name}，开启章/期限章待人工确认")
     report.entries = seq_e
 
-    sha_files = {op.rel: port.stage_blob(op.content) for op in files}
-    sha = port.commit_tree(sha_files, "init: v6 → loom-1 迁移\n\n条目: -\n")
-    port.move_ref(sha)
-    port.worktree_sync()
+    # 两次落库均走 settle 事务（所有权矩阵强制点；审阅报告 四.3）
+    from loom.core.settle.transaction import SettleInput
+    from loom.core.settle.transaction import run as settle_run
+
+    settle_run(port, SettleInput(message="init: v6 → loom-1 迁移\n\n条目: -\n", files=files))
 
     list_path = "迁移待校对清单.md"
-    port.write_text(list_path, "\n".join(report.lines()) + "\n")
-    sha2 = port.commit_tree({list_path: port.stage_blob(port.read_text(list_path))},
-                            "fix(手改)\n\n迁移待校对清单\n")
-    port.move_ref(sha2)
-    port.worktree_sync()
+    settle_run(port, SettleInput(
+        message="fix(手改)\n\n迁移待校对清单\n",
+        files=[FileOp(list_path, "\n".join(report.lines()) + "\n", actor="core")],
+    ))
     return report
 
 

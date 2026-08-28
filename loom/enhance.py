@@ -7,7 +7,7 @@ from loom.core.repo.frontmatter import split
 from loom.core.repo.layout import BookRepo
 
 
-def build_l0_skeleton(repo: BookRepo) -> str:
+def build_l0_skeleton(repo: BookRepo, entries: dict | None = None) -> str:
     """L0 全书骨架：全部卷纲结构化字段压缩为 30-50 行全书地图。"""
     lines: list[str] = ["[Book Map·L0 全书骨架]"]
     vol_files = sorted(rel for rel in repo.port.list_files("大纲/卷纲") if rel.endswith(".md"))
@@ -20,16 +20,17 @@ def build_l0_skeleton(repo: BookRepo) -> str:
         lines.append(
             f"卷{fm.get('vol')}：高潮{climax}｜时间 {ts.get('start', '?')}→{ts.get('end', '?')}"
             f"｜开 {len(opens)} 条｜兑 {len(pays)} 条")
-    entries = load_entries(repo)
+    entries = entries if entries is not None else load_entries(repo)
     top = [e for e in entries.values() if e.status == "active"][:5]
     if top:
         lines.append("活跃承诺：" + "；".join(f"{e.id}/{e.kind}" for e in top))
     return "\n".join(lines[:50])
 
 
-def book_map_full(repo: BookRepo, chapter: int, entries_top: int = 5) -> str:
+def book_map_full(repo: BookRepo, chapter: int, entries_top: int = 5,
+                  entries: dict | None = None) -> str:
     """Book Map 完整版：L0 骨架 + 当前卷定位 + 主要在场人物一行卡。"""
-    skeleton = build_l0_skeleton(repo)
+    skeleton = build_l0_skeleton(repo, entries)
     current = ""
     for rel in sorted(repo.port.list_files("大纲/卷纲")):
         if not rel.endswith(".md"):
@@ -53,7 +54,7 @@ def book_map_full(repo: BookRepo, chapter: int, entries_top: int = 5) -> str:
     lines = [skeleton, current or "当前位置：（卷纲未覆盖本章）"]
     if present:
         lines.append(f"在场人物：{'、'.join(present)}")
-    entries = load_entries(repo)
+    entries = entries if entries is not None else load_entries(repo)
     top = [e for e in entries.values() if e.status == "active"][:entries_top]
     if top:
         lines.append("反复读：" + "；".join(f"{e.id}({e.due_ch or '-'})" for e in top))
@@ -76,35 +77,37 @@ def cost_dashboard(repo: BookRepo) -> str:
 
 
 def synth_book(repo: BookRepo, chapters: int = 300) -> None:
-    """合成压测书：chapters 章摘要 + 时间线 + 条目 touch（确定性合成，无 LLM）。"""
+    """合成压测书：chapters 章摘要 + 时间线 + 条目 touch（确定性合成，无 LLM）。
+
+    写入经 settle 事务过所有权矩阵（审阅报告 四.3，不绕行 port 直写）。
+    """
     port = repo.port
     from loom.core.repo.frontmatter import dumps as fm_dumps
+    from loom.core.settle.transaction import FileOp, SettleInput
+    from loom.core.settle.transaction import run as settle_run
 
-    files: list[tuple[str, str]] = []
+    files: list[FileOp] = []
     for ch in range(1, chapters + 1):
-        files.append((f"定稿/摘要/ch{ch:04d}.md",
-                      fm_dumps({"chapter": ch, "word_count": 3000},
-                               f"第{ch}章：合成的第{ch}章情节推进，主角应对危机{ch}。承接点{ch}\n")))
-        files.append((f"定稿/设定/时间线/ch{ch:04d}.md",
-                      fm_dumps({"id": f"set-tl-ch{ch:04d}", "family": "时间线", "status": "active",
-                                "ch": ch, "book_time": f"历{ch}", "event": f"事件{ch}",
-                                "present": ["苏小白"]}, "")))
+        files.append(FileOp(f"定稿/摘要/ch{ch:04d}.md",
+                            fm_dumps({"chapter": ch, "word_count": 3000},
+                                     f"第{ch}章：合成的第{ch}章情节推进，主角应对危机{ch}。承接点{ch}\n")))
+        files.append(FileOp(f"定稿/设定/时间线/ch{ch:04d}.md",
+                            fm_dumps({"id": f"set-tl-ch{ch:04d}", "family": "时间线", "status": "active",
+                                      "ch": ch, "book_time": f"历{ch}", "event": f"事件{ch}",
+                                      "present": ["苏小白"]}, "")))
     vols = (chapters + 39) // 40
     for v in range(1, vols + 1):
-        files.append((f"定稿/卷摘要/vol{v:02d}.md",
-                      fm_dumps({"vol": v, "source_chapters": [(v - 1) * 40 + 1, min(v * 40, chapters)]},
-                               f"合成卷{v}摘要\n")))
+        files.append(FileOp(f"定稿/卷摘要/vol{v:02d}.md",
+                            fm_dumps({"vol": v, "source_chapters": [(v - 1) * 40 + 1, min(v * 40, chapters)]},
+                                     f"合成卷{v}摘要\n")))
     from loom.core.repo.frontmatter import dumps as d
 
     for i in range(1, 31):
-        files.append((f"大纲/条目/伏笔/F-{i:03d}.md",
-                      d({"id": f"F-{i:03d}", "kind": "伏笔", "strength": "high", "status": "active",
-                         "opened_ch": (i - 1) * 10 + 1, "due_ch": min((i - 1) * 10 + 30, chapters),
-                         "last_touched_ch": min((i - 1) * 10 + 5, chapters)}, f"合成伏笔{i}\n")))
-    sha_files = {rel: port.stage_blob(content) for rel, content in files}
-    sha = port.commit_tree(sha_files, "fix(手改)\n\n合成压测数据\n")
-    port.move_ref(sha)
-    port.worktree_sync()
+        files.append(FileOp(f"大纲/条目/伏笔/F-{i:03d}.md",
+                            d({"id": f"F-{i:03d}", "kind": "伏笔", "strength": "high", "status": "active",
+                               "opened_ch": (i - 1) * 10 + 1, "due_ch": min((i - 1) * 10 + 30, chapters),
+                               "last_touched_ch": min((i - 1) * 10 + 5, chapters)}, f"合成伏笔{i}\n")))
+    settle_run(port, SettleInput(message="fix(手改)\n\n合成压测数据\n", files=files))
 
 
 def pack_constant_check(repo: BookRepo, probe_chapters: tuple[int, int]) -> dict:

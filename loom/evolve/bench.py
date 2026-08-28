@@ -63,12 +63,13 @@ def run_blindset(repo: BookRepo, provider_factories: dict[str, callable]) -> Pat
                 system="你是中文网文写手。按指令续写，直接输出正文。",
                 user=f"【前文背景】\n{s.context}\n\n【指令】\n{s.instruction}")
             rel = f"{run_dir}/{alias}/{s.sid}.md"
-            repo.port.write_text(rel, str(res.data.get("text", "")))
-    repo.port.write_text(
+            repo.write_file(rel, str(res.data.get("text", "")), actor="core")
+    repo.write_file(
         f"{run_dir}/blinding_key.json",
         json.dumps({"aliases": {a: getattr(p, "model", "?") for a, p in provider_factories.items()},
                     "note": "盲排期间严禁查看本文件；排名完成后由作者解锁对照"},
-                   ensure_ascii=False, indent=1))
+                   ensure_ascii=False, indent=1),
+        actor="core")
     return Path(run_dir)
 
 
@@ -91,6 +92,6 @@ def build_routing_table(repo: BookRepo, run_dir: str, ranks_csv: str) -> dict:
     table = {"winner_overall": max(wins, key=wins.get) if wins else None,
              "wins": wins, "wins_by_scene": scene_wins,
              "note": "各档路由按 wins_by_scene 场景胜任度配置；写入 book.yaml model_routing"}
-    repo.port.write_text(f"{run_dir}/routing_table.json",
-                         json.dumps(table, ensure_ascii=False, indent=1))
+    repo.write_file(f"{run_dir}/routing_table.json",
+                    json.dumps(table, ensure_ascii=False, indent=1), actor="core")
     return table

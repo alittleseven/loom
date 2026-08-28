@@ -29,6 +29,8 @@ from loom.core.repo.schema import (
 WORD_TIERS = {"standard": (2600, 3600), "climax": (3400, 4600), "setup": (2400, 3200)}
 NGRAM = 7
 NGRAM_MAX_RATE = 0.02
+# P1a 形态（审阅报告 I）：词表含全角"？""！""……"等宽泛信号——章末任何问/叹号即过，
+# 无钩检测近似保底不误拦；语义收紧（按 hook_type 分型校验）待后续标定。
 HOOK_LEXICON = ("就在这时", "突然", "下一秒", "竟然", "谁也没想", "？", "！", "……", "秘密", "死")
 DEFAULT_VOL_CHAPTERS = 40  # 卷章数默认值（start_ch/end_ch 未声明时）
 REVEALED_RE = re.compile(r"revealed@(\d+)")
@@ -180,16 +182,20 @@ def check_fulfillment(draft: str, assertions: list[str]) -> tuple[list[Issue], d
 
 
 def check_timeline(repo: BookRepo, chapter: int, time_anchor: str) -> list[Issue]:
-    ordered = timeline_anchors(repo)
+    # 单次扫描时间线目录（审阅报告 I：原实现 anchors/prev 各扫一遍）
+    pairs = sorted((int(fm["ch"]), str(fm["book_time"]))
+                   for _r, fm in load_settings(repo, "时间线")
+                   if fm.get("ch") is not None and fm.get("book_time"))
+    ordered: list[str] = []
+    for _ch, t in pairs:
+        if t not in ordered:
+            ordered.append(t)
     issues = []
     if time_anchor not in ordered:
         return [Issue("timeline", "warn", f"锚点『{time_anchor}』未入时间线账本（scribe 应补录）", target=time_anchor)]
     idx = _anchor_index(time_anchor, ordered)
     if chapter > 1:
-        prev = [t for ch, t in sorted(
-            (int(fm["ch"]), str(fm["book_time"]))
-            for _r, fm in load_settings(repo, "时间线") if fm.get("ch") and fm.get("book_time")
-        ) if ch < chapter]
+        prev = [t for ch, t in pairs if ch < chapter]
         if prev:
             idx_prev = _anchor_index(prev[-1], ordered)
             if idx is not None and idx_prev is not None and idx < idx_prev:
@@ -376,10 +382,19 @@ def run_plan_gates(
     overdue = [e.id for e in entries.values()
                if e.status == "active" and e.due_ch is not None and e.due_ch < start_ch]
     covered = {i.id for i in vol.entry_plan if i.action == "兑付"}
-    waivers = {w.reason for w in vol.waivers}
+    # 豁免逐条绑定：waiver.target（扩展字段，str 或 list[str]）指明豁免的条目 id；
+    # 未绑定 target 的计划级豁免不生效（审阅报告 F：一条豁免不得豁免全部超期条目）
+    waived: set[str] = set()
+    for w in vol.waivers:
+        target = (w.model_extra or {}).get("target")
+        targets = [target] if isinstance(target, str) else list(target or [])
+        waived.update(str(t) for t in targets)
     for eid in overdue:
-        if eid not in covered and not waivers:
-            issues.append(Issue("gate5_overdue", "block", f"超期条目 {eid} 本卷无兑付安排且无豁免", target=eid))
+        if eid in covered or eid in waived:
+            continue
+        hint = ("存在计划级豁免但未绑定该条目（waiver.target）" if vol.waivers else "无豁免")
+        issues.append(Issue("gate5_overdue", "block",
+                            f"超期条目 {eid} 本卷无兑付安排（{hint}）", target=eid))
 
     # gate 6 题材配比红线
     ratio = ratio_from_chapter_types(vol.chapter_types)

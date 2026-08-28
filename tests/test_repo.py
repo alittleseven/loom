@@ -100,3 +100,46 @@ def test_decision_card_written_with_seam(book):
     book.write_file(rel, dumps(fm, "## 盘面\n"), actor="author")
     fm2, _ = book.read_fm(rel)
     assert_seam(fm2)  # 不抛
+
+
+def test_read_fm_sniffs_seam_version(book):
+    """审阅报告 H：门面读取即嗅探 seam_version，不匹配显式降级（不再纸面能力）。"""
+    rel = "工作区/决策卡/ch0001.md"
+    book.write_file(rel, dumps({"spec_stage": "decision_card", "seam_version": "999",
+                                "chapter": 1, "generated_by": "author"}, "x\n"), actor="author")
+    with pytest.raises(SeamVersionMismatch):
+        book.read_fm(rel)
+
+
+def test_settle_cannot_write_unlisted_paths(book):
+    """审阅报告 I：未列路径不再对 settle 全开（settle 不得直写 book.yaml）。"""
+    with pytest.raises(OwnershipViolation):
+        book.write_file("book.yaml", "spec_version: loom-1\ngenre: 玄幻\n", actor="settle")
+
+
+def test_append_text_semantics():
+    """审阅报告 I：ledger/signals 追加走 append_text 增量写，替身同语义。"""
+    port = InMemoryRepoPort()
+    port.write_text("演化/signals.jsonl", "")
+    port.append_text("演化/signals.jsonl", '{"a": 1}\n')
+    port.append_text("演化/signals.jsonl", '{"a": 2}\n')
+    assert port.read_text("演化/signals.jsonl") == '{"a": 1}\n{"a": 2}\n'
+
+
+def test_write_text_retries_on_winerror5(book, monkeypatch):
+    """审阅报告 四.4：os.replace 遇 Windows 瞬时锁错误（WinError 5）自动重试。"""
+    import loom.core.ports as ports_mod
+
+    real_replace = ports_mod.os.replace
+    calls = {"n": 0}
+
+    def flaky(src, dst):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise PermissionError(5, "拒绝访问。")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(ports_mod.os, "replace", flaky)
+    book.port.write_text("大纲/总纲.md", "重试后写入的内容")
+    assert calls["n"] == 2
+    assert "重试后写入的内容" in book.port.read_text("大纲/总纲.md")
