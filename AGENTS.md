@@ -15,13 +15,18 @@
 - 依赖：pydantic（结构化输出与校验）、GitPython（git 操作）、标准库优先
 - 打包：pyproject.toml + setuptools；入口 `loom = loom.cli:main`
 
-## 常用命令（规划值，P0 落地后回填实测命令）
+## 常用命令（P0 实测）
 
 ```powershell
-pip install -e ".[dev]"   # 开发安装
-pytest                    # 测试（core 表驱动 / prep 快照 / settle 故障注入 / edge cassette）
+pip install -e ".[dev]"   # 开发安装（pydantic / GitPython / pyyaml + pytest / ruff）
+pytest                    # 测试（schema 表驱动 / settle 故障注入 / 长路径 / 配置一致性）
 ruff check .              # Lint
+loom init <dir> --genre <题材>   # 初始化 loom-1 书仓
+loom doctor <dir>                # 书仓体检
 ```
+
+- loom-1 格式规范（normative）：`docs/plans/loom-1-格式规范-v0.1.md`（P0 冻结：四张 schema + 写侧家族 + 豁免载体 A1 + 配比口径 A3 + run-ledger 落盘 A8 + 只增不改粒度 A11）
+- 模型路由基线：GLM-5.3-Flash（见 `docs/decisions/0001-模型路由基线-GLM-5.3-Flash.md`）
 
 ## 目录结构（按 v3.0 方案 §5.1 规划，P0 起逐段填充）
 

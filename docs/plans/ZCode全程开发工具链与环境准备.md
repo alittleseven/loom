@@ -79,13 +79,12 @@
 
 测试与故障注入全部零新增依赖——这是 v3.0 两个接口协议（`LLMProvider`/`RepoPort`）设计的直接红利。CI 的前置条件是 GitHub 远程仓库（§6 行动项 2）。
 
-## 6. 待 Human 行动项
+## 6. 待 Human 行动项（2026-08-29 更新：4 项已完成）
 
-1. **安装 GitHub CLI**（P0 期间任意时间；开源发布 + CI 触发便利）：`winget install GitHub.cli`，装后 `gh auth login`。
-2. **创建 GitHub 远程仓库**（P0 建CI 前完成即可）：私有起步，GPL-3.0-or-later LICENSE 全文在首次开源发布前补入（项目 AGENTS.md 已登记）。
-3. **填写 `.env`**（P1a edge 开发前）：复制 `.env.example` 填 `LOOM_LLM_API_KEY`。供应商建议智谱 GLM 系列（与 v3.0 §5.3 成本模型同量级，且 ZCode 即运行 GLM，盲测时可同台对比）。注意：`.env.example` 目前缺 `LOOM_LLM_BASE_URL` 与按档位模型名路由字段，P1a `LLMProvider` 落地时一并补全。
-4. **提供 fantasy01 书稿位置**（P1b 前）：plan_gates 回测标定（v3.0 §4.1）与盲测金标准集素材都依赖它；本工作区内未找到，需 Human 指路。
-5. （可选）若后续 PyPI 直连变慢，给 uv/pip 配国内镜像：`uv pip install --index-url https://pypi.tuna.tsinghua.edu.cn/simple ...`。
+1. ~~安装 GitHub CLI~~ ✅ 已装；**遗留：`gh auth login` 未执行**（推送前需要，Human 手动做一次浏览器授权）。
+2. ~~创建 GitHub 远程仓库~~ ✅ `git@github.com:alittleseven/loom.git`（remote 已配置；push 按 AGENTS.md 红线仍等 Human 指令）。
+3. ~~填写 `.env`~~ ✅ Key 已入；`.env.example` 已补 `LOOM_LLM_BASE_URL` 与按档位模型名字段，缺省 `glm-5.3-flash`（ADR-0001）。
+4. ~~提供 fantasy01 书稿位置~~ ✅ `C:\lgq\workspace\opc_space\projects\webnovel-projects\fantasy01`（34 章，大纲/正文/设定集齐全）。**P1b 前注意**（审阅报告补记口径）：盲测抽样需区分亲笔稿与 v6 工具协作稿，亲笔稿优先，协作稿可另作对照组。
 
 ## 7. ZCode 全程开发工作法（每 Phase 固定循环）
 
