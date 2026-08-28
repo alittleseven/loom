@@ -1,0 +1,30 @@
+[project]
+name = "loom"
+version = "0.0.1"
+description = "织机 Loom —— 中文网文 AI 写作工具（loom-1 书仓格式的参考实现）"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "GPL-3.0-or-later"
+dependencies = [
+    "pydantic>=2.7",
+    "GitPython>=3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+loom = "loom.cli:main"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["loom*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
