@@ -115,10 +115,15 @@ def _anchor_index(anchor: str, ordered: list[str]) -> int | None:
 
 # ---- 机检十项 ----
 
-def check_banned_words(draft: str, constitution: dict) -> list[Issue]:
+def check_banned_words(draft: str, constitution: dict, poison_points: dict | None = None) -> list[Issue]:
+    """禁词 = 风格宪法 banned_words + 题材毒点（权重 ≥0.8 视同禁词，§6.4）。"""
+    words = [w for w in constitution.get("banned_words", []) if w]
+    for w, weight in (poison_points or {}).items():
+        if float(weight) >= 0.8 and w and w not in words:
+            words.append(w)
     return [
         Issue("banned_word", "block", f"命中禁词：{w}", target=w)
-        for w in constitution.get("banned_words", []) if w and w in draft
+        for w in words if w in draft
     ]
 
 
@@ -304,7 +309,8 @@ def run_checks(repo: BookRepo, ctx: ChapterContext) -> list[Issue]:
     tiers = _word_tiers(repo, profile)
     touches = [ec.id for ec in ctx.manuscript.entry_changes]
     issues: list[Issue] = []
-    issues += check_banned_words(ctx.draft, constitution)
+    issues += check_banned_words(ctx.draft, constitution,
+                                 profile.poison_points if profile else None)
     issues += check_banned_patterns(ctx.draft, constitution)
     issues += check_leak(repo, ctx.chapter, ctx.draft)
     issues += check_proper_nouns(repo, ctx.draft)

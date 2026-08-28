@@ -16,10 +16,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from loom.core import ledger as ledger_mod
+from loom.core.ports import GitRepoPort
 from loom.core.repo.frontmatter import dumps, split
 from loom.core.repo.layout import BookRepo
-from loom.core.ports import GitRepoPort
-from loom.core.settle.transaction import FileOp, SettleInput, run as settle_run
+from loom.core.settle.transaction import FileOp, SettleInput
+from loom.core.settle.transaction import run as settle_run
 
 ROOT = "C:/lgq/ai-workspace/projects/loom-books/fantasy01"
 CHAPTERS = range(1, 35)

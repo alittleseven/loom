@@ -222,3 +222,21 @@ def test_gate6_ratio_redline():
     vol = _vol(chapter_types=types)
     issues = run_plan_gates(vol, {}, _profile(), [])
     assert any(i.rule == "gate6_ratio" and "side" in i.msg for i in issues)
+
+
+def test_poison_points_act_as_banned_words(rich_book):
+    """题材毒点（权重≥0.8）视同禁词（§6.4 poison_points 消费点）。"""
+    from loom.core.checks.checks import ChapterContext, ManuscriptFM, run_checks
+    from loom.core.repo.frontmatter import dumps as _dumps
+
+    rich_book.port.write_text("文风/题材/都市异能.md", _dumps(
+        {"spec_stage": "genre_profile", "genre": "都市异能",
+         "entry_density": [2, 4], "climax_gap": 8, "deadline_margin": 5,
+         "ratio_redlines": {"main": [0.55, 0.85], "romance": [0.1, 0.35], "side": [0.0, 0.3]},
+         "poison_points": {"圣母": 0.9, "降智": 0.9, "懦弱退让": 0.5}}, ""))
+    ms = ManuscriptFM(spec_stage="manuscript", chapter=2, title="x",
+                      time_anchor="元启三年夏", entry_changes=[{"id": "F-001", "action": "~"}],
+                      contract_digest=[], word_count=3000)
+    ctx = ChapterContext(chapter=2, draft="他圣母了，一路降智。", manuscript=ms, card=None, contract=[])
+    targets = {i.target for i in run_checks(rich_book, ctx) if i.rule == "banned_word"}
+    assert {"圣母", "降智"} <= targets and "懦弱退让" not in targets

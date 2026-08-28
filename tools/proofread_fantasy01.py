@@ -12,9 +12,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from loom.core.ports import GitRepoPort
 from loom.core.repo.frontmatter import dumps, split
 from loom.core.repo.layout import BookRepo
-from loom.core.ports import GitRepoPort
 
 ROOT = Path("C:/lgq/ai-workspace/projects/loom-books/fantasy01")
 V6 = Path("C:/lgq/workspace/opc_space/projects/webnovel-projects/fantasy01")
