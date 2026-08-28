@@ -159,6 +159,13 @@ def init_book(root: Path | str, genre: str) -> BookRepo:
             {"spec_stage": "style_fingerprint", "baseline": None, "rolling": {}, "baseline_range": None}
         ),
     )
+    port.write_text(
+        "文风/风格宪法.md",
+        dumps(
+            {"banned_words": [], "banned_patterns": [], "catchphrases": []},
+            "\n（否决入宪：三次同类否决→系统提议→作者确认；每条带出处章号。机检读本文件 front matter。）\n",
+        ),
+    )
     port.write_text("演化/signals.jsonl", "")
     port.write_text("演化/run-ledger.jsonl", "")
 
