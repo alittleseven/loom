@@ -1,10 +1,10 @@
 """loom CLI 唯一入口。
 
-命令面规划（v3.0 方案 §5.1 + 审阅报告 A10）：
-init / plan vol / plan batch / next / prep / render / check / review /
-settle / batch / evolve / doctor / migrate / ledger / memory
-
-P0 已落地：init / doctor。其余随 Phase 逐命令实现。
+命令面（v3.0 方案 §5.1 + 审阅报告 四.2 消除"功能存在但不可达"）：
+已落地：init / doctor / next / plan / batch / bench / migrate / evolve / ledger /
+        review / golden（金句收割·确认）/ volsummary（卷摘要）/ enhance（P5 工具）
+规划中（随 Phase 补实现）：prep / render / check / settle（能力已并入 next 单章
+        闭环）/ memory（记忆四态纠错，待 spec 演进）
 """
 from __future__ import annotations
 
@@ -203,6 +203,98 @@ def cmd_ledger(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_review(args: argparse.Namespace) -> int:
+    """双审（事实审 + 编辑审）指定章的定稿文本；阻断退出码 1。"""
+    from loom.core.ports import GitRepoPort
+    from loom.core.prep.prep import compile_pack
+    from loom.core.repo.layout import BookRepo
+    from loom.core.repo.schema import ChapterCardFM
+    from loom.edge.reviewers import run_reviews
+
+    root = Path(args.path).absolute()
+    book = BookRepo(GitRepoPort(root))
+    card_rel = f"大纲/章纲/ch{args.chapter:04d}.md"
+    fm, _body = book.read_fm(card_rel)
+    card = ChapterCardFM.model_validate(fm)
+    contract = list(fm.get("contract", []) or [])
+    ms_rel = f"定稿/正文/ch{args.chapter:04d}.md"
+    _ms_fm, draft = book.read_fm(ms_rel)
+    pack = compile_pack(book, args.chapter, card, contract)
+    outcome = run_reviews(book, _make_provider(root), args.chapter, draft, pack, contract)
+    print(f"第 {args.chapter} 章双审：{'阻断' if outcome.blocked else '通过'}"
+          f"（issue {len(outcome.issues)} 条，模型 {outcome.model}）")
+    for i in outcome.issues:
+        print(f"  - [{i.get('severity')}] {i.get('desc')}（{i.get('quote', '')}）")
+    return 1 if outcome.blocked else 0
+
+
+def cmd_golden(args: argparse.Namespace) -> int:
+    """金句收割闭环：harvest（改稿 diff>30% → tentative）→ confirm（作者确认 active）。"""
+    from loom.core.ports import GitRepoPort
+    from loom.core.repo.layout import BookRepo
+    from loom.edge import scribe as scribe_mod
+
+    root = Path(args.path).absolute()
+    book = BookRepo(GitRepoPort(root))
+    if args.action == "confirm":
+        ok = scribe_mod.confirm_golden(book, args.scene, args.index)
+        print("金句已确认 active。" if ok else "未找到该 tentative 金句（检查 --scene/--index）。")
+        return 0 if ok else 1
+    if args.chapter is None or not args.final:
+        raise SystemExit("harvest 需要 --chapter N 与 --final <作者改稿文件>")
+    _fm, draft = book.read_fm(f"定稿/正文/ch{args.chapter:04d}.md")
+    final = Path(args.final).read_text(encoding="utf-8")
+    count = scribe_mod.harvest_candidates(book, _make_provider(root), args.chapter, draft, final)
+    print(f"金句收割完成：本章入库 {count} 条候选（tentative，待 confirm）。")
+    return 0
+
+
+def cmd_volsummary(args: argparse.Namespace) -> int:
+    """L1 卷摘要：卷末由章摘要合成，scribe(volNN) 事务落库。"""
+    from loom.core.ports import GitRepoPort
+    from loom.core.repo.layout import BookRepo
+    from loom.edge import scribe as scribe_mod
+
+    root = Path(args.path).absolute()
+    book = BookRepo(GitRepoPort(root))
+    commit = scribe_mod.build_vol_summary(book, _make_provider(root),
+                                          args.vol, (args.start, args.end))
+    print(f"卷摘要 vol{args.vol:02d} 已落库：{commit[:12]}")
+    return 0
+
+
+def cmd_enhance(args: argparse.Namespace) -> int:
+    """P5 工具入口：l0 全书骨架 / bookmap 完整版 / synth 合成压测 / packcheck 恒定检查。"""
+    from loom.core.ports import GitRepoPort
+    from loom.core.repo.layout import BookRepo
+    from loom.enhance import (
+        book_map_full,
+        build_l0_skeleton,
+        pack_constant_check,
+        synth_book,
+    )
+
+    root = Path(args.path).absolute()
+    book = BookRepo(GitRepoPort(root))
+    if args.action == "l0":
+        print(build_l0_skeleton(book))
+        return 0
+    if args.action == "bookmap":
+        print(book_map_full(book, args.chapter))
+        return 0
+    if args.action == "synth":
+        if not args.yes:
+            print("synth 将向书仓提交合成压测数据（不可逆 commit），确认请加 --yes。")
+            return 1
+        synth_book(book, chapters=args.chapters)
+        print(f"合成压测书已提交：{args.chapters} 章。")
+        return 0
+    result = pack_constant_check(book, probe_chapters=(args.from_ch, args.to_ch))
+    status = "恒定" if result["constant"] else "超限"
+    print(f"pack 恒定检查：{result['sizes']}，漂移 {result['drift']}——{status}。")
+    return 0 if result["constant"] else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     from loom import __version__
 
@@ -262,6 +354,37 @@ def build_parser() -> argparse.ArgumentParser:
     p_ledger = sub.add_parser("ledger", help="成本电表面板")
     p_ledger.add_argument("path", help="书仓目录")
     p_ledger.set_defaults(func=cmd_ledger)
+
+    p_review = sub.add_parser("review", help="双审（事实审+编辑审）指定章定稿；阻断退出码 1")
+    p_review.add_argument("path", help="书仓目录")
+    p_review.add_argument("--chapter", type=int, required=True, help="章号")
+    p_review.set_defaults(func=cmd_review)
+
+    p_golden = sub.add_parser("golden", help="金句收割闭环：harvest / confirm")
+    p_golden.add_argument("path", help="书仓目录")
+    p_golden.add_argument("action", choices=["harvest", "confirm"])
+    p_golden.add_argument("--chapter", type=int, help="章号（harvest）")
+    p_golden.add_argument("--final", help="作者改稿后的定稿文本文件（harvest）")
+    p_golden.add_argument("--scene", help="场景名（confirm）")
+    p_golden.add_argument("--index", type=int, help="候选序号（confirm）")
+    p_golden.set_defaults(func=cmd_golden)
+
+    p_vol = sub.add_parser("volsummary", help="L1 卷摘要合成（scribe(volNN) 事务落库）")
+    p_vol.add_argument("path", help="书仓目录")
+    p_vol.add_argument("--vol", type=int, required=True, help="卷号")
+    p_vol.add_argument("--start", type=int, required=True, help="起始章")
+    p_vol.add_argument("--end", type=int, required=True, help="结束章")
+    p_vol.set_defaults(func=cmd_volsummary)
+
+    p_enh = sub.add_parser("enhance", help="P5 工具：l0 / bookmap / synth / packcheck")
+    p_enh.add_argument("path", help="书仓目录")
+    p_enh.add_argument("action", choices=["l0", "bookmap", "synth", "packcheck"])
+    p_enh.add_argument("--chapter", type=int, help="章号（bookmap）")
+    p_enh.add_argument("--chapters", type=int, default=300, help="合成章数（synth）")
+    p_enh.add_argument("--from", dest="from_ch", type=int, default=1, help="起始探测章（packcheck）")
+    p_enh.add_argument("--to", dest="to_ch", type=int, default=300, help="结束探测章（packcheck）")
+    p_enh.add_argument("--yes", action="store_true", help="确认提交合成数据（synth）")
+    p_enh.set_defaults(func=cmd_enhance)
 
     return parser
 

@@ -28,38 +28,47 @@ loom doctor <dir>                # 书仓体检
 - loom-1 格式规范（normative）：`docs/plans/loom-1-格式规范-v0.1.md`（P0 冻结：四张 schema + 写侧家族 + 豁免载体 A1 + 配比口径 A3 + run-ledger 落盘 A8 + 只增不改粒度 A11）
 - 模型路由基线：GLM-5.3-Flash（见 `docs/decisions/0001-模型路由基线-GLM-5.3-Flash.md`）
 
-## 目录结构（按 v3.0 方案 §5.1 规划，P0 起逐段填充）
+## 目录结构（2026-08-29 审阅后与实现对齐；审阅报告 四.1）
 
 ```
 loom/                         ← 本仓库（工具本体）
 ├── AGENTS.md                 # 本文件
 ├── pyproject.toml
 ├── loom/                     # Python 包根
-│   ├── cli.py                # 唯一入口（init/plan/next/prep/render/check/review/
-│   │                         #   settle/batch/evolve/doctor/migrate/ledger/memory）
+│   ├── cli.py                # 唯一入口（已落地：init/doctor/next/plan/batch/bench/
+│   │                         #   migrate/evolve/ledger/review/golden/volsummary/enhance）
+│   ├── pipeline.py           # 单章写作环：决策卡→prep→渲染→机检→双审→结算→scribe
+│   ├── planning.py           # 规划环：plan_vol（六道门）+ plan_batch（章纲卡）
+│   ├── staging.py            # 批次状态机 + 七项熔断（AGENTS 规划的 core/staging 并入包根）
+│   ├── enhance.py            # P5 增强：L0 骨架/book_map_full/成本面板/合成压测
 │   ├── core/                 # 确定性内核（零 LLM）
+│   │   ├── ports.py          #   RepoPort 协议 + GitRepoPort（长路径/故障注入/WinError5 重试）
+│   │   ├── seam.py           #   缝协议版本嗅探（SEAM_VERSION 单一来源）
+│   │   ├── config.py         #   环境变量与模型路由链
+│   │   ├── cache.py          #   .cache SQLite 索引
 │   │   ├── repo/             #   书仓读写、front matter、写入所有权矩阵 + 书仓写锁
-│   │   ├── legacy/           #   【GPL 隔离区】v6 移植零件（合同引擎/CSV 检索/
-│   │   │                     #     写前闸门/时间线校验/记忆四态/run-ledger/RAG 降级链）
-│   │   ├── prep/             #   上下文编译器（pack 槽位 + Book Map + L0/L1/L2）
+│   │   ├── legacy/           #   【GPL 隔离区】v6 移植零件（合同引擎/CSV 检索/…）
+│   │   ├── prep/             #   上下文编译器（pack 槽位 + Book Map）
 │   │   ├── checks/           #   机检十项 + plan_gates 六道（零 LLM）
-│   │   ├── settle/           #   原子事务 + 哈希防串稿 + 批内工件失效锁
-│   │   ├── staging/          #   批次状态机 + 七项熔断
+│   │   ├── settle/           #   原子事务 + 哈希防串稿 + run-ledger 落库
 │   │   ├── ledger/           #   run-ledger 事件链 + signals 埋点 + 成本电表
 │   │   ├── migrate/          #   v6 → loom-1 迁移器
 │   │   └── doctor/           #   体检 + 修复卡
-│   ├── edge/                 # 智能边缘（全部 LLM 调用）
-│   │   ├── client/           #   LLMProvider：路由/重试/记账
-│   │   ├── renderer/         #   渲染（分档 + 关键章陪审团）
-│   │   ├── reviewers/        #   事实审 + 编辑审（双镜头）
-│   │   └── scribe/           #   章摘要 + 事实提取 + 金句收割分类
+│   ├── edge/                 # 智能边缘（全部 LLM 调用；单文件模块）
+│   │   ├── client/           #   LLMProvider 协议 + HTTP 实现 + Fake 替身
+│   │   ├── prompts.py        #   各档 system/user prompt
+│   │   ├── renderer.py       #   渲染（分档 + 机检反馈重渲染）
+│   │   ├── reviewers.py      #   事实审 + 编辑审（sha256 令牌绑定）
+│   │   └── scribe.py         #   章摘要 + 事实提取 + 指纹 + 金句收割
 │   └── evolve/               # 品味闭环（离线，只读 signals）
-│       ├── analyzer/         #   signals 聚合分析
-│       ├── bench/            #   网文-bench + 盲测集执行器
-│       └── optimizer/        #   提案→回归→holdout→人审→快照
-├── tests/                    # P0/P1 起：core 表驱动 / prep 快照 / settle 故障注入 / edge cassette
+│       ├── bench.py          #   盲测集执行器 + 路由表
+│       └── optimizer.py      #   signals 聚合分析 → 提案 → 快照回滚
+├── tests/                    # core 表驱动 / prep 快照 / settle 故障注入 / edge cassette
 └── docs/                     # research / reports / plans / decisions
 ```
+
+偏差说明：v3.0 方案 §5.1 规划的 `core/staging`（批次）、edge 子包（renderer/reviewers/scribe）
+落为包根/单文件模块，功能等价；如需回归规划布局须整体迁移并同步本表，不做双头维护。
 
 注意：用户的书（loom-1 书仓）是运行时由 `loom init` 创建的独立 git 仓库，不在本仓库内。
 
@@ -70,14 +79,15 @@ loom/                         ← 本仓库（工具本体）
 - 可机检的必结构化：机检依赖字段一律 front matter 声明，散文段落仅作人读注解
 - 定稿只增不改（适用粒度见审阅报告 A11，P0 spec 定）；settle 原子事务；fail-closed
 - 盲测金标准集：只作路由事实源 + 拒绝式约束，永不作 fitness；机检通过率永不作 fitness
-- 单书仓单写者：批次运行持锁文件（含 pid）；signals append 由内核独占
+- 单书仓单写者：批次运行（run_batch）全程持锁文件（含 pid，可重入）；每次 settle 事务嵌套进入；signals append 由内核独占
+- 所有产物写入过所有权矩阵：运行时走 BookRepo.write_file 或 settle FileOp；evolve/bench/migrate/synth 不得绕行 port 直写（init 自举除外）
 - Windows 基线：全链路 UTF-8（文件 I/O 显式 encoding）；git 中文 message 用 `-F` 文件方式；`core.longpaths=true`
 
 ## 编码约定
 
 - 结构化输出用紧凑 JSON（不美化）；渲染正文自然语言直出
 - 未知字段容错保留写回，不丢单
-- SQLite 开 WAL + busy_timeout；原子写对 Windows 瞬时锁错误（WinError 5）自动重试
+- SQLite 开 WAL + busy_timeout；原子写（GitRepoPort.write_text 的 os.replace）对 Windows 瞬时锁错误（WinError 5）自动重试——已落地（审阅报告 四.4）
 - 测试策略（N4）：core 表驱动全覆盖；prep 同书同章重编译 pack 字节一致（快照）；settle 故障注入矩阵；edge cassette 录制回放（无 Key 可跑 CI）；CI = Windows 单平台 + 配置-实现一致性检查（book.yaml 无消费点字段报错）
 
 ## 文档归档
