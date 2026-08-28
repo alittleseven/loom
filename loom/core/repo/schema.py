@@ -147,7 +147,7 @@ class EntryFM(LoomModel):
     kind: Literal["伏笔", "悬念", "感情线"]
     strength: Literal["high", "mid", "low"]
     status: Literal["active", "tentative", "outdated", "contradicted", "paid"]
-    opened_ch: int = Field(ge=1)
+    opened_ch: int | None = None  # 迁移条目开启章未知时为 null（待校对）
     due_ch: int | None = None
     last_touched_ch: int | None = None
 

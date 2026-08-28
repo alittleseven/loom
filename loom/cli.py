@@ -115,6 +115,24 @@ def cmd_bench(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_migrate(args: argparse.Namespace) -> int:
+    from loom.core.doctor.doctor import run_doctor
+    from loom.core.migrate.v6 import migrate
+    from loom.core.ports import GitRepoPort
+
+    src, root = Path(args.source).absolute(), Path(args.path).absolute()
+    report = migrate(src, root, genre=args.genre)
+    print(f"v6 → loom-1 迁移完成：{root}")
+    for line in report.lines():
+        print(f"  {line}")
+    dr = run_doctor(GitRepoPort(root))
+    print(f"doctor：{'健康（零孤儿零坏账）' if dr.ok else '存在问题：'}")
+    if not dr.ok:
+        for line in dr.lines():
+            print(f"  {line}")
+    return 0 if dr.ok else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     from loom import __version__
 
@@ -150,6 +168,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_bench = sub.add_parser("bench", help="盲测金标准集执行（匿名候选 × 样本）")
     p_bench.add_argument("path", help="书仓目录")
     p_bench.set_defaults(func=cmd_bench)
+
+    p_mig = sub.add_parser("migrate", help="v6 书稿 → loom-1 书仓迁移（源只读）")
+    p_mig.add_argument("source", help="v6 书稿目录（只读）")
+    p_mig.add_argument("path", help="目标书仓目录（新建）")
+    p_mig.add_argument("--genre", required=True, help="题材")
+    p_mig.set_defaults(func=cmd_migrate)
 
     return parser
 
