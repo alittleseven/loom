@@ -5,7 +5,6 @@ import pytest
 
 from loom.core.checks.checks import (
     ChapterContext,
-    Issue,
     check_banned_patterns,
     check_banned_words,
     check_entry_form,
@@ -22,7 +21,6 @@ from loom.core.checks.checks import (
 )
 from loom.core.repo.frontmatter import dumps
 from loom.core.repo.schema import (
-    ChapterCardFM,
     EntryFM,
     GenreProfileFM,
     ManuscriptFM,
@@ -94,7 +92,6 @@ def test_banned_pattern_regex(rich_book):
 
 
 def test_leak_scan(rich_book):
-    port = rich_book.port
     # 第 2 章：revealed@10 尚未揭示 → 提到"魔神转世"即泄密
     assert check_leak(rich_book, 2, "他想起自己竟是魔神转世。")
     assert not check_leak(rich_book, 10, "魔神转世早已公开。")  # 已揭示章

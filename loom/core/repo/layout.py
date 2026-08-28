@@ -36,7 +36,7 @@ ROOT_DIRS = (
     "工作区",
 )
 
-BOOK_GITIGNORE = "工作区/\n.cache/\n.loom/\n*.loom-tmp\n"
+BOOK_GITIGNORE = "工作区/\n.cache/\n.loom/\n*.loom-tmp\n演化/signals.jsonl\n"
 
 
 class BookFormatError(ValueError):
@@ -170,7 +170,14 @@ def init_book(root: Path | str, genre: str) -> BookRepo:
     port.write_text("演化/run-ledger.jsonl", "")
 
     message = "init: loom-1 书仓初始化\n\n条目: -\n"
-    files = {rel: port.read_text(rel) for rel in port.list_files(".") if not rel.startswith(".git/")}
+    ignored = ("工作区/", ".cache/", ".loom/", "演化/signals.jsonl")
+    files = {
+        rel: port.read_text(rel)
+        for rel in port.list_files(".")
+        if not rel.startswith(".git/")
+        and not rel.endswith(".loom-tmp")
+        and not any(rel == p.rstrip("/") or rel.startswith(p) for p in ignored)
+    }
     blobs = {rel: port.stage_blob(content) for rel, content in files.items()}
     sha = port.commit_tree(blobs, message)
     port.move_ref(sha)

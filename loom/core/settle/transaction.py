@@ -49,6 +49,7 @@ class SettleInput:
     reviewed_sha256: str | None = None    # 被审草稿 sha256（防串稿）
     retcon: int | None = None             # 显式 retcon(N) 事务章号
     chapter: int | None = None            # 记入 run-ledger 的章号
+    ledger_events: tuple[dict, ...] = ()  # 随本次事务入审计链的额外事件（usage 等）
 
 
 @dataclass
@@ -95,15 +96,16 @@ def run(port: RepoPort, plan: SettleInput) -> SettleResult:
     try:
         if plan.chapter is not None:
             old = port.read_text(LEDGER_REL) if port.exists(LEDGER_REL) else ""
-            event = json.dumps(
+            lines = [json.dumps(e, ensure_ascii=False) for e in plan.ledger_events]
+            lines.append(json.dumps(
                 {
                     "event": "settle",
                     "chapter": plan.chapter,
                     "files": [op.rel for op in plan.files if op.content is not None],
                 },
                 ensure_ascii=False,
-            )
-            plan.files.append(FileOp(LEDGER_REL, old + event + "\n"))
+            ))
+            plan.files.append(FileOp(LEDGER_REL, old + "\n".join(lines) + "\n"))
 
         blobs: dict[str, str | None] = {}
         port.fail_here(FAULT_STAGE_BLOBS)

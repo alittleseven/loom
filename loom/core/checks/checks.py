@@ -9,11 +9,13 @@ Issue.detail 即 signals gate_block 的五元组载荷（kind/rule/target/hint�
 """
 from __future__ import annotations
 
+import itertools
 import re
 from dataclasses import dataclass, field
 
 from loom.core.legacy import contract as contract_engine
 from loom.core.repo.frontmatter import split
+from loom.core.repo.layout import BookRepo
 from loom.core.repo.schema import (
     ChapterCardFM,
     EntryFM,
@@ -23,7 +25,6 @@ from loom.core.repo.schema import (
     VolOutlineFM,
     ratio_from_chapter_types,
 )
-from loom.core.repo.layout import BookRepo
 
 WORD_TIERS = {"standard": (2600, 3600), "climax": (3400, 4600), "setup": (2400, 3200)}
 NGRAM = 7
@@ -193,8 +194,31 @@ def check_timeline(repo: BookRepo, chapter: int, time_anchor: str) -> list[Issue
     return issues
 
 
-def check_word_count(tier: str, word_count: int) -> list[Issue]:
-    lo, hi = WORD_TIERS.get(tier, WORD_TIERS["standard"])
+def _word_tiers(repo: BookRepo, profile: GenreProfileFM | None) -> dict:
+    """字数档：默认 WORD_TIERS，可被题材 profile 的 word_tiers 扩展字段覆盖。"""
+    extra = (profile.model_extra or {}) if profile else {}
+    src = extra.get("word_tiers") or WORD_TIERS
+    return {k: tuple(v) for k, v in src.items()}
+
+
+def load_profile(repo: BookRepo) -> GenreProfileFM | None:
+
+    try:
+        genre = repo.load_config().genre
+    except Exception:
+        return None
+    rel = f"文风/题材/{genre}.md"
+    if not repo.port.exists(rel):
+        return None
+    fm, _ = split(repo.port.read_text(rel))
+    try:
+        return GenreProfileFM.model_validate(fm)
+    except Exception:
+        return None
+
+
+def check_word_count(tier: str, word_count: int, tiers: dict | None = None) -> list[Issue]:
+    lo, hi = (tiers or WORD_TIERS).get(tier, WORD_TIERS["standard"])
     if not lo <= word_count <= hi:
         return [Issue("word_count", "block", f"字数 {word_count} 超出 {tier} 档预算 {lo}-{hi}")]
     return []
@@ -258,7 +282,7 @@ def check_ratio(repo: BookRepo, chapter: int, touches: list[str]) -> list[Issue]
     has_r = any(t.startswith("R-") for t in touches)
     has_main = any(not t.startswith("R-") for t in touches)
     if declared == "romance" and touches and not has_r:
-        issues.append(Issue("ratio", "warn", f"卷纲标注本章 romance，但 touch 无感情线条目", target=f"ch{chapter:04d}"))
+        issues.append(Issue("ratio", "warn", "卷纲标注本章 romance，但 touch 无感情线条目", target=f"ch{chapter:04d}"))
     if declared in ("main", "climax") and touches and not has_main:
         issues.append(Issue("ratio", "warn", f"卷纲标注本章 {declared}，但只 touch 了感情线", target=f"ch{chapter:04d}"))
     return issues
@@ -276,6 +300,8 @@ def run_checks(repo: BookRepo, ctx: ChapterContext) -> list[Issue]:
     """执行机检十项，返回全部 issue（含 warn）。"""
     constitution = load_style_constitution(repo)
     entries = load_entries(repo)
+    profile = ctx.profile or load_profile(repo)
+    tiers = _word_tiers(repo, profile)
     touches = [ec.id for ec in ctx.manuscript.entry_changes]
     issues: list[Issue] = []
     issues += check_banned_words(ctx.draft, constitution)
@@ -286,7 +312,7 @@ def run_checks(repo: BookRepo, ctx: ChapterContext) -> list[Issue]:
     issues += fulfill_issues
     issues += check_timeline(repo, ctx.chapter, ctx.manuscript.time_anchor)
     tier = ctx.card.word_tier if ctx.card else "standard"
-    issues += check_word_count(tier, ctx.manuscript.word_count)
+    issues += check_word_count(tier, ctx.manuscript.word_count, tiers)
     issues += check_ngram_repetition(ctx.draft)
     issues += check_entry_form(repo, ctx, entries)
     issues += check_ratio(repo, ctx.chapter, touches)
@@ -326,7 +352,7 @@ def run_plan_gates(
 
     # gate 3 爽点间距
     climaxes = sorted(vol.climax_chapters)
-    for a, b in zip(climaxes, climaxes[1:]):
+    for a, b in itertools.pairwise(climaxes):
         if b - a > rhythm.climax_gap:
             issues.append(Issue("gate3_climax_gap", "block", f"高潮点 {a}→{b} 间距 {b-a} > {rhythm.climax_gap}"))
     if not climaxes:

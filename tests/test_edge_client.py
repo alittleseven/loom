@@ -7,10 +7,10 @@ import pytest
 
 from loom.core.config import build_chain, load_env
 from loom.edge.client.http import (
+    Cassette,
     HTTPProvider,
     JsonParseError,
     ProviderError,
-    Cassette,
     cassette_transport,
     parse_json,
 )
@@ -46,7 +46,7 @@ def test_build_chain_full_order(tmp_path):
 
 
 def test_build_chain_partial(tmp_path):
-    chain = build_chain(_env(tmp_path, **{"LOOM_OCGO_API_KEY": ""}))
+    chain = build_chain(_env(tmp_path, LOOM_OCGO_API_KEY=""))
     assert [ep.name for ep in chain] == ["ali", "glm"]
     assert build_chain({}) == []
 
@@ -85,8 +85,8 @@ def test_http_provider_success_and_payload_shape(tmp_path):
     provider = HTTPProvider(build_chain(env), transport=transport)
     result = provider.complete_structured(tier="review", schema_name="r", system="s", user="u")
     assert result.data == {"x": 1} and result.model == "glm-5.3-flash" and result.usage_in == 100
-    ep, payload = calls[0][0], calls[0][2]
-    assert payload["messages"][0]["role"] == "system"
+    name, payload = calls[0][0], calls[0][2]
+    assert name == "ocgo" and payload["messages"][0]["role"] == "system"
 
 
 def test_http_provider_fallback_chain(tmp_path):
@@ -140,8 +140,7 @@ def test_anthropic_wire_payload(tmp_path):
 
 
 def test_cassette_record_and_replay(tmp_path):
-    env = _env(tmp_path, **{"LOOM_OCGO_MODEL_ID2": "", "LOOM_OCGO_ALI_BASE_URL": "",
-                            "LOOM_ALI_API_KEY": "", "LOOM_LLM_API_KEY": ""})
+    env = _env(tmp_path, LOOM_OCGO_MODEL_ID2="", LOOM_OCGO_ALI_BASE_URL="", LOOM_ALI_API_KEY="", LOOM_LLM_API_KEY="")
     chain = build_chain(env)
     real, _ = _fake_transport([(json.dumps({"n": 42}), 7, 3)])
     cas = Cassette(tmp_path / "cas.json")

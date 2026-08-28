@@ -29,6 +29,12 @@ class LLMProvider(Protocol):
         self, *, tier: str, schema_name: str, system: str, user: str
     ) -> ProviderResult: ...
 
+    def complete_text(
+        self, *, tier: str, schema_name: str, system: str, user: str
+    ) -> ProviderResult:
+        """渲染正文的自然语言直出通道（data={"text": ...}）。"""
+        ...
+
 
 class ProviderCall:
     """一次调用的留痕（供 evolve 分析与测试断言）。"""
@@ -73,4 +79,22 @@ class FakeLLMProvider:
             raise KeyError(f"FakeLLMProvider 未配置 schema_name={schema_name!r} 的响应")
         return ProviderResult(
             data=data, model=self.model, usage_in=self.usage[0], usage_out=self.usage[1], tier=tier
+        )
+
+    def complete_text(
+        self, *, tier: str, schema_name: str, system: str, user: str
+    ) -> ProviderResult:
+        if tier not in TIERS:
+            raise ValueError(f"未知模型档：{tier!r}")
+        self.calls.append(ProviderCall(tier, schema_name, system, user))
+        scripted = self.scripts.get(schema_name)
+        if callable(scripted):
+            text = scripted(user)
+        elif isinstance(scripted, str):
+            text = scripted
+        else:
+            raise KeyError(f"FakeLLMProvider 未配置 schema_name={schema_name!r} 的文本响应")
+        return ProviderResult(
+            data={"text": text}, model=self.model,
+            usage_in=self.usage[0], usage_out=self.usage[1], tier=tier,
         )

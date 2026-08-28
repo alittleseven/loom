@@ -12,8 +12,8 @@ import json
 import re
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from loom.core.config import Endpoint
 from loom.core.seam import SEAM_VERSION  # noqa: F401
@@ -122,6 +122,23 @@ class HTTPProvider:
                 except ProviderError as e:
                     errors.append(str(e))
                     break  # 降级下一端点
+        raise ProviderError("降级链全部耗尽：\n  " + "\n  ".join(errors))
+
+
+    def complete_text(
+        self, *, tier: str, schema_name: str, system: str, user: str
+    ) -> ProviderResult:
+        """自然语言直出通道（渲染正文不走 JSON 解析，§5.4 结构化输出用紧凑 JSON 除外）。"""
+        errors: list[str] = []
+        for ep in self.chain:
+            try:
+                text, u_in, u_out = self._transport(
+                    ep, _payload(ep, system, user, force_json=False), self.timeout
+                )
+                return ProviderResult(data={"text": text}, model=ep.model_id,
+                                      usage_in=u_in, usage_out=u_out, tier=tier)
+            except ProviderError as e:
+                errors.append(str(e))
         raise ProviderError("降级链全部耗尽：\n  " + "\n  ".join(errors))
 
 

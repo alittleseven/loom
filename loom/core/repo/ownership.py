@@ -17,7 +17,7 @@ _OWNERSHIP: tuple[tuple[str, frozenset[str]], ...] = (
     ("定稿/设定/", frozenset({"settle", "scribe", "author"})),
     ("定稿/记忆/", frozenset({"settle", "scribe", "author"})),
     ("大纲/", frozenset({"settle", "author"})),
-    ("文风/", frozenset({"settle", "author"})),
+    ("文风/", frozenset({"settle", "scribe", "author"})),  # 金句收割归 scribe（M4）
     ("工作区/", frozenset({"settle", "scribe", "prep", "check", "review", "author"})),
     (".loom/", frozenset({"core"})),
 )

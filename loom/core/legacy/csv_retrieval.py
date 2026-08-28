@@ -34,7 +34,7 @@ class KnowledgeTable:
     _df: dict[str, int] = field(default_factory=dict)
 
     @classmethod
-    def load_csv(cls, path: Path | str, text_column: str = "正文") -> "KnowledgeTable":
+    def load_csv(cls, path: Path | str, text_column: str = "正文") -> KnowledgeTable:
         raw = Path(path).read_text(encoding="utf-8-sig")
         rows = list(csv.DictReader(io.StringIO(raw)))
         table = cls(rows=rows)
