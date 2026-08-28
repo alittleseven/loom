@@ -9,6 +9,7 @@ P0 已落地：init / doctor。其余随 Phase 逐命令实现。
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -133,6 +134,75 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     return 0 if dr.ok else 1
 
 
+def cmd_batch(args: argparse.Namespace) -> int:
+    from loom.core.ports import GitRepoPort
+    from loom.core.repo.layout import BookRepo
+    from loom.staging import (
+        accept_batch,
+        arm_batch,
+        resume_batch,
+        run_batch,
+    )
+
+    root = Path(args.path).absolute()
+    book = BookRepo(GitRepoPort(root))
+    if args.action == "arm":
+        chapters = list(range(args.start, args.start + args.count))
+        state = arm_batch(book, chapters=chapters, autonomy=args.autonomy)
+        print(f"批次已 ARMED：ch{chapters[0]:04d}-{chapters[-1]:04d}（{args.autonomy}）")
+        return 0
+    if args.action == "resume":
+        state = resume_batch(book)
+        print(f"批次已恢复：{state['state']}")
+        return 0
+    if args.action == "accept":
+        state = accept_batch(book)
+        print(f"批次已全收：{state['state']}")
+        return 0
+    # run
+    report = run_batch(book, _make_provider(root))
+    for line in report.brief:
+        print(f"  {line}")
+    if report.breaker.get("triggered"):
+        print(f"  熔断：{report.breaker['triggered']}")
+    print(f"批次结束：{report.state}（完成 {len(report.done)} 章）")
+    return 0
+
+
+def cmd_evolve(args: argparse.Namespace) -> int:
+    from loom.core.ports import GitRepoPort
+    from loom.core.repo.layout import BookRepo
+    from loom.evolve.optimizer import Proposal, analyze, propose, weekly_report
+
+    root = Path(args.path).absolute()
+    book = BookRepo(GitRepoPort(root))
+    if args.action == "report":
+        print(weekly_report(book))
+        return 0
+    if args.action == "propose":
+        a = analyze(book)
+        pid = propose(book, Proposal(
+            target=args.target,
+            change={"system_append": f"近期 {a['top_rules']} 问题集中，优先规避"},
+            reason=f"由 signals 周报触发：{a['gate_blocks_by_rule']}",
+            metrics_before={"review_block_rate": a["review_block_rate"],
+                            "plan_deviation_rate": a["plan_deviation_rate"]}))
+        print(f"提案已落盘待审：演化/优化提案/{pid}.json")
+        return 0
+    print(json.dumps(analyze(book), ensure_ascii=False, indent=1))
+    return 0
+
+
+def cmd_ledger(args: argparse.Namespace) -> int:
+    from loom.core.ports import GitRepoPort
+    from loom.core.repo.layout import BookRepo
+    from loom.enhance import cost_dashboard
+
+    book = BookRepo(GitRepoPort(Path(args.path).absolute()))
+    print(cost_dashboard(book))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     from loom import __version__
 
@@ -174,6 +244,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_mig.add_argument("path", help="目标书仓目录（新建）")
     p_mig.add_argument("--genre", required=True, help="题材")
     p_mig.set_defaults(func=cmd_migrate)
+
+    p_batch = sub.add_parser("batch", help="批次连写：arm/run/resume/accept")
+    p_batch.add_argument("path", help="书仓目录")
+    p_batch.add_argument("action", choices=["arm", "run", "resume", "accept"])
+    p_batch.add_argument("--start", type=int, default=1, help="起始章（arm）")
+    p_batch.add_argument("--count", type=int, default=8, help="章数（arm）")
+    p_batch.add_argument("--autonomy", default="L2", choices=["L0", "L1", "L2"], help="自治档")
+    p_batch.set_defaults(func=cmd_batch)
+
+    p_evolve = sub.add_parser("evolve", help="品味闭环（离线）：report/propose/analyze")
+    p_evolve.add_argument("path", help="书仓目录")
+    p_evolve.add_argument("action", choices=["report", "propose", "analyze"])
+    p_evolve.add_argument("--target", default="review_prompt", help="提案对象")
+    p_evolve.set_defaults(func=cmd_evolve)
+
+    p_ledger = sub.add_parser("ledger", help="成本电表面板")
+    p_ledger.add_argument("path", help="书仓目录")
+    p_ledger.set_defaults(func=cmd_ledger)
 
     return parser
 
