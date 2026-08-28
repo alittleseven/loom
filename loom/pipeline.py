@@ -181,6 +181,12 @@ def run_chapter(
     sc = scribe_mod.scribe_commit(repo, provider, chapter, body)
     ledger_mod.append_signal(repo, "settle_diff",
                              {"chapter": chapter, "changed_ratio": 0.0, "autonomy": autonomy})
+    planned = list(card.touches)
+    actual = [ec.id for ec in ms.entry_changes]
+    ledger_mod.append_signal(repo, "plan_deviation", {
+        "chapter": chapter, "planned": planned, "actual": actual,
+        "deviation": sorted(set(planned) ^ set(actual)),
+    })
 
     return ChapterResult(
         chapter=chapter, commit=result.commit, scribe_commit=sc.commit,

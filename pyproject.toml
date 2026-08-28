@@ -35,5 +35,6 @@ testpaths = ["tests"]
 "loom/core/cache.py" = ["BLE001", "S112"]
 "loom/core/doctor/doctor.py" = ["BLE001"]
 "loom/core/checks/checks.py" = ["BLE001", "S112"]
+"loom/planning.py" = ["BLE001"]
 # 表驱动测试惯用 dict(**patch) 组装用例
 "tests/*" = ["C408"]

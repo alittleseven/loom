@@ -71,6 +71,50 @@ def cmd_next(args: argparse.Namespace) -> int:
     return 0
 
 
+def _make_provider(root: Path):
+    from loom.core.config import build_chain, find_env_files, load_env
+    from loom.edge.client.http import HTTPProvider
+
+    env = load_env(*find_env_files(root))
+    return HTTPProvider(build_chain(env))
+
+
+def cmd_plan(args: argparse.Namespace) -> int:
+    from loom.core.ports import GitRepoPort
+    from loom.core.repo.layout import BookRepo
+    from loom.planning import plan_batch, plan_vol
+
+    root = Path(args.path).absolute()
+    book = BookRepo(GitRepoPort(root))
+    provider = _make_provider(root)
+    if args.what == "vol":
+        vol = plan_vol(book, provider, args.vol)
+        print(f"卷纲 vol{args.vol:02d} 已生成并过六道机检（climax={vol.climax_chapters}）")
+        return 0
+    plan = plan_batch(book, provider, args.vol, args.start,
+                      count=args.count, approve=args.yes)
+    print(plan.readview)
+    if args.yes:
+        print("已批准落仓（batch 事务提交）。")
+    else:
+        print("\n（以上为提案；确认无误后加 --yes 落仓）")
+    return 0
+
+
+def cmd_bench(args: argparse.Namespace) -> int:
+    from loom.core.ports import GitRepoPort
+    from loom.core.repo.layout import BookRepo
+    from loom.evolve.bench import load_samples, run_blindset
+
+    root = Path(args.path).absolute()
+    book = BookRepo(GitRepoPort(root))
+    samples = load_samples(book)
+    run_dir = run_blindset(book, {alias: _make_provider(root) for alias in "AB"})
+    print(f"盲测运行完成：{run_dir}（{len(samples)} 样本 × 2 匿名候选）")
+    print("下一步：作者匿名盲排后填写 ranks.csv，再生成路由表。")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     from loom import __version__
 
@@ -93,6 +137,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_next.add_argument("--autonomy", default="L1", choices=["L0", "L1", "L2"], help="自治档")
     p_next.add_argument("--words", type=int, default=3000, help="目标字数")
     p_next.set_defaults(func=cmd_next)
+
+    p_plan = sub.add_parser("plan", help="规划环：plan vol <N> / plan batch --vol N --start M")
+    p_plan.add_argument("path", help="书仓目录")
+    p_plan.add_argument("what", choices=["vol", "batch"], help="卷纲或批次章纲")
+    p_plan.add_argument("--vol", type=int, default=1, help="卷号")
+    p_plan.add_argument("--start", type=int, default=1, help="批次起始章号（batch）")
+    p_plan.add_argument("--count", type=int, default=8, help="批次章数（batch）")
+    p_plan.add_argument("--yes", action="store_true", help="批准落仓（batch）")
+    p_plan.set_defaults(func=cmd_plan)
+
+    p_bench = sub.add_parser("bench", help="盲测金标准集执行（匿名候选 × 样本）")
+    p_bench.add_argument("path", help="书仓目录")
+    p_bench.set_defaults(func=cmd_bench)
 
     return parser
 

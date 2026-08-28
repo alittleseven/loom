@@ -160,3 +160,30 @@ def confirm_golden(repo: BookRepo, scene: str, index: int) -> bool:
         repo.write_file(rel, dumps(fm, body), actor="author")
         return True
     return False
+
+
+def build_vol_summary(repo: BookRepo, provider, vol: int, chapter_range: tuple[int, int]) -> str:
+    """L1 卷摘要：卷末由章摘要合成（§4.2.2 分层摘要）。scribe(volNN) 事务落库。"""
+    parts = []
+    for ch in range(chapter_range[0], chapter_range[1] + 1):
+        rel = f"定稿/摘要/ch{ch:04d}.md"
+        if repo.port.exists(rel):
+            _fm, body = split(repo.port.read_text(rel))
+            parts.append(f"第{ch}章：{' '.join(body.split())[:150]}")
+    if not parts:
+        raise ValueError(f"卷 {vol} 无章摘要可合成")
+    res = provider.complete_structured(
+        tier="scribe", schema_name="vol_summary",
+        system="你是摘要员。把一批章摘要合成为一段 ≤300 字的卷摘要，保留主线推进与未兑付伏笔。输出 JSON：{\"summary\": \"...\"}。",
+        user=";".join(parts).replace(";", "\n"))
+    summary = str(res.data.get("summary", ""))
+    rel = f"定稿/卷摘要/vol{vol:02d}.md"
+    files = [FileOp(rel, dumps({"vol": vol, "source_chapters": list(chapter_range)},
+                                f"{summary}{chr(10)}"), actor="scribe")]
+    result = settle_run(repo.port, SettleInput(
+        message=f"scribe(vol{vol:02d}){chr(10)}{chr(10)}L1 卷摘要合成{chr(10)}",
+        files=files,
+        ledger_events=({"event": "scribe_call", "chapter": 0, "kind": "vol_summary",
+                        "usage": {"in": res.usage_in, "out": res.usage_out}},),
+    ))
+    return result.commit
