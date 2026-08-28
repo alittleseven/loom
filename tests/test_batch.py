@@ -10,6 +10,7 @@ from loom.staging import (
     arm_batch,
     compute_breakers,
     evaluate_breakers,
+    load_batch_state,
     resume_batch,
     run_batch,
 )
@@ -96,3 +97,104 @@ def test_batch_arm_rejected_when_locked(tmp_path):
     finally:
         child.kill()
         child.wait()
+
+
+def test_signal_window_reset_per_type(tmp_path):
+    """审阅报告 B：resume 窗口重置按类型记录 offset，新信号不被旧 offset 屏蔽。"""
+    from loom.core import ledger as ledger_mod
+    from loom.staging import _signal_offsets
+
+    book = _seed_batch(tmp_path)
+    ledger_mod.append_ledger_event(book, {"event": "settle", "chapter": 1})
+    ledger_mod.append_signal(book, "gate_block", {"chapter": 1, "kind": "block", "rule": "x"})
+    ledger_mod.append_signal(book, "plan_deviation", {"chapter": 1, "deviation": ["F-001"]})
+    ledger_mod.append_signal(book, "plan_deviation", {"chapter": 1, "deviation": []})
+    m0 = compute_breakers(book)
+    # rate 按章计（n=1）：同章两条 plan_deviation（一真一空）→ 该章记 1
+    assert m0["check_block_rate"] == 1.0 and m0["plan_deviation_rate"] == 1.0
+
+    offsets = _signal_offsets(book)
+    assert offsets["gate_block"] == 1 and offsets["plan_deviation"] == 2
+    m1 = compute_breakers(book, since_signal=offsets)  # 重置后旧信号不可见
+    assert m1["check_block_rate"] == 0.0 and m1["plan_deviation_rate"] == 0.0
+
+    # 新信号恢复可见（旧实现按跨类总和切 gate_block，会把新信号一并屏蔽）
+    ledger_mod.append_signal(book, "gate_block", {"chapter": 1, "kind": "block", "rule": "leak"})
+    m2 = compute_breakers(book, since_signal=offsets)
+    assert m2["check_block_rate"] == 1.0 and m2["leak_hit"] == 1
+    # 旧版 int offset 兼容读取（按 gate_block 单类型解释）
+    assert compute_breakers(book, since_signal=1)["check_block_rate"] == 1.0
+
+
+def test_resume_records_per_type_offsets(tmp_path):
+    import json as _json
+
+    from loom.staging import STATE_REL
+
+    book = _seed_batch(tmp_path)
+    book.port.write_text(STATE_REL, _json.dumps(
+        {"state": "BATCH_PAUSED", "chapters": [1], "done": [], "autonomy": "L2",
+         "halted_at": None, "halt_reason": None}))
+    state = resume_batch(book)
+    assert isinstance(state["signal_window_reset"], dict)
+    assert {"gate_block", "plan_deviation", "review_disposition",
+            "card_action", "settle_diff", "fulfillment_missed"} == set(state["signal_window_reset"])
+
+
+def test_missed_rate_breaker_counts_fulfillment_missed(tmp_path):
+    """审阅报告 C-missed：missed_rate 由 fulfillment_missed 信号驱动，不再恒零。"""
+    from loom.core import ledger as ledger_mod
+
+    book = _seed_batch(tmp_path)
+    ledger_mod.append_ledger_event(book, {"event": "settle", "chapter": 1})
+    assert compute_breakers(book)["missed_rate"] == 0.0
+    ledger_mod.append_signal(book, "fulfillment_missed", {"chapter": 1, "missed": ["含:李浮舟"]})
+    assert compute_breakers(book)["missed_rate"] == 1.0
+    ev = evaluate_breakers(book)
+    assert any(t["rule"] == "missed_rate" for t in ev["triggered"])
+
+
+def test_rerender_rate_counts_review_rerender(tmp_path):
+    """审阅报告 C-rerender：每次渲染 attempt 入账，重渲染率不再恒零。"""
+    from loom.pipeline import run_chapter
+    from tests.test_pipeline import _CARD
+
+    book = _seed_batch(tmp_path)
+    calls = {"n": 0}
+
+    def draft_fn(user):
+        calls["n"] += 1
+        return _long_draft()
+
+    provider = _provider(
+        manuscript=draft_fn,
+        review_fact=lambda user: {"issues": [{"severity": "block", "desc": "x", "quote": "..."}]}
+        if calls["n"] == 1 else {"issues": []},
+    )
+    run_chapter(book, provider, _CARD, contract=[])
+    assert compute_breakers(book)["rerender_rate"] == 1.0  # 2 次渲染 - 1 章
+
+
+def test_run_batch_holds_lock_and_catches_settle_rejected(tmp_path, monkeypatch):
+    """审阅报告 G：批次运行全程持锁；结算前置失败转 HALTED（可恢复），不裸 traceback。"""
+    import loom.staging as staging_mod
+    from loom.core.repo import lock as repo_lock
+    from loom.core.settle.transaction import SettleRejected
+
+    book = _seed_batch(tmp_path)
+    arm_batch(book, chapters=[1, 2], autonomy="L2")
+
+    seen = {}
+
+    def exploding_run_chapter(repo, provider, card, contract, **kw):
+        seen["lock_held"] = repo_lock.read_lock(repo.port) is not None
+        raise SettleRejected("工作区不干净，拒绝结算：模拟中途写入")
+
+    monkeypatch.setattr(staging_mod, "run_chapter", exploding_run_chapter)
+    report = run_batch(book, _provider())
+    assert report.state == BatchState.HALTED.value
+    assert seen["lock_held"] is True                     # 运行期间持锁
+    assert not book.port.exists(".loom/lock.json")       # 结束后释放
+    state = load_batch_state(book)
+    assert "结算被拒" in state["halt_reason"]
+    assert resume_batch(book)["state"] == BatchState.RUNNING.value  # 可恢复

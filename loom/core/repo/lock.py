@@ -17,6 +17,10 @@ if TYPE_CHECKING:
 
 LOCK_REL = ".loom/lock.json"
 
+# 本进程持锁深度（批次全程持锁 + settle 每事务持锁嵌套；CLI 单线程假设）。
+# depth>0 时 acquire 不重写锁文件、release 只减计数，最外层释放才删锁。
+_depth = 0
+
 
 class RepoBusy(RuntimeError):
     """书仓正被其他进程写入（或作者命令撞上批次运行）。"""
@@ -69,16 +73,28 @@ def is_locked_by_other(port: RepoPort) -> int | None:
 
 
 def acquire(port: RepoPort) -> None:
-    """获取写锁；存活的外来锁 → RepoBusy；stale 锁接管（告警走返回前 print）。"""
+    """获取写锁（可重入）；存活的外来锁 → RepoBusy；stale 锁接管（告警走返回前 print）。"""
+    global _depth
+    if _depth > 0:  # 本进程已持有：嵌套进入（batch 持锁中的 settle）
+        _depth += 1
+        return
     foreign = is_locked_by_other(port)
     if foreign is not None:
         raise RepoBusy(foreign)
     if port.exists(LOCK_REL):
         print("[loom] 检测到 stale 写锁（pid 已不存在），自动接管", file=sys.stderr)
     port.write_text(LOCK_REL, json.dumps({"pid": os.getpid(), "started_at": time.time()}))
+    _depth = 1
 
 
 def release(port: RepoPort) -> None:
+    """释放写锁：只减嵌套计数，最外层才真正删锁文件。"""
+    global _depth
+    if _depth > 1:
+        _depth -= 1
+        return
+    if _depth == 1:
+        _depth = 0
     lock = read_lock(port)
     if lock and int(lock.get("pid", 0)) == os.getpid():
         port.delete(LOCK_REL)

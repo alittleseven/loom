@@ -13,12 +13,16 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from loom.core import ledger as ledger_mod
-from loom.core.repo.frontmatter import split
+from loom.core.repo import lock as repo_lock
 from loom.core.repo.layout import BookRepo
 from loom.core.repo.schema import EntryFM
+from loom.core.settle.transaction import SettleRejected
 from loom.pipeline import PipelineHalted, run_chapter
 
 WINDOW = 10
+# resume 信号窗口重置涉及的类型（offset 按类型记录，审阅报告 B）
+WINDOW_SIGNAL_TYPES = ("gate_block", "review_disposition", "card_action",
+                       "settle_diff", "plan_deviation", "fulfillment_missed")
 
 
 class BatchState(str, Enum):
@@ -61,13 +65,18 @@ def save_batch_state(repo: BookRepo, state: dict) -> None:
 
 
 def arm_batch(repo: BookRepo, chapters: list[int], autonomy: str = "L2") -> dict:
-    """前置条件：批次大纲（章纲卡）已批准落仓。持写锁进入 ARMED。"""
-    from loom.core.repo import lock as repo_lock
+    """前置条件：批次大纲（章纲卡）已批准落仓；工作区干净、无外来写锁（预检）。
 
+    锁语义（审阅报告 G）：arm 只预检不持锁；批次运行期间（run_batch）全程持有
+    写锁，每次 settle 事务经可重入 acquire 嵌套进入。
+    """
     missing = [ch for ch in chapters
                if not repo.port.exists(f"大纲/章纲/ch{ch:04d}.md")]
     if missing:
         raise ValueError(f"章纲卡缺失：{missing[:3]}（先 plan batch --yes）")
+    dirty = repo.port.status_porcelain()
+    if dirty:
+        raise ValueError(f"工作区不干净，拒绝 ARMED：{dirty[:3]}（先提交或清理）")
     foreign = repo_lock.is_locked_by_other(repo.port)
     if foreign is not None:
         raise repo_lock.RepoBusy(foreign)
@@ -79,10 +88,23 @@ def arm_batch(repo: BookRepo, chapters: list[int], autonomy: str = "L2") -> dict
 
 # ---- 七项熔断指标计算（滚动窗口 10 章，零 LLM）----
 
-def compute_breakers(repo: BookRepo, window: int = WINDOW, *, since_signal: int = 0) -> dict:
-    """滚动窗口熔断指标。since_signal：只统计行号 ≥ 该值的 signals（resume 重置窗口）。"""
-    gate_blocks = ledger_mod.read_signals(repo, "gate_block")[since_signal:]
-    settles = [e for e in ledger_mod.read_ledger(repo) if e.get("event") == "settle"]
+def _signal_offsets(repo: BookRepo) -> dict[str, int]:
+    """resume 信号窗口重置点：按类型分别记录已有 signals 条数（审阅报告 B）。"""
+    return {t: len(ledger_mod.read_signals(repo, t)) for t in WINDOW_SIGNAL_TYPES}
+
+
+def compute_breakers(repo: BookRepo, window: int = WINDOW,
+                     *, since_signal: int | dict[str, int] = 0) -> dict:
+    """滚动窗口熔断指标。
+
+    since_signal：resume 重置点，按类型的 signals offset 字典；旧版 int（跨类型
+    总和）仅兼容读取历史批次状态，此时按 gate_block 单类型 offset 解释。
+    """
+    offsets = (since_signal if isinstance(since_signal, dict)
+               else {"gate_block": int(since_signal)})
+    gate_blocks = ledger_mod.read_signals(repo, "gate_block")[offsets.get("gate_block", 0):]
+    ledger_events = ledger_mod.read_ledger(repo)
+    settles = [e for e in ledger_events if e.get("event") == "settle"]
     recent_chapters = [e["chapter"] for e in settles][-window:]
     recent_set = set(recent_chapters)
     n = max(len(recent_chapters), 1)
@@ -92,11 +114,12 @@ def compute_breakers(repo: BookRepo, window: int = WINDOW, *, since_signal: int 
     leak_hits = sum(1 for g in gate_blocks
                     if g.get("rule") == "leak" and g.get("kind") == "block"
                     and g.get("chapter") in recent_set)
-    rerender_chapters = {e["chapter"] for e in ledger_mod.read_ledger(repo)
-                         if e.get("event") == "render_call"
-                         and e.get("chapter") in recent_set}
-    render_counts = sum(1 for e in ledger_mod.read_ledger(repo)
-                        if e.get("event") == "render_call" and e.get("chapter") in recent_set)
+    # 重渲染：render_call 每次渲染 attempt 一条（pipeline 逐 attempt 埋点），
+    # 超出章数的调用即重渲染（审阅报告 C-rerender 的真实数据源）
+    render_calls = [e for e in ledger_events
+                    if e.get("event") == "render_call" and e.get("chapter") in recent_set]
+    render_counts = len(render_calls)
+    rerender_chapters = {e["chapter"] for e in render_calls}
     entries: dict[str, EntryFM] = {}
     from loom.core.checks.checks import load_entries
 
@@ -105,15 +128,18 @@ def compute_breakers(repo: BookRepo, window: int = WINDOW, *, since_signal: int 
                       if e.status == "active" and e.strength == "high"
                       and e.due_ch is not None and e.last_touched_ch is not None
                       and e.due_ch < e.last_touched_ch)
-    plan_dev = [s for s in ledger_mod.read_signals(repo, "plan_deviation")
+    plan_dev = [s for s in ledger_mod.read_signals(repo, "plan_deviation")[
+                    offsets.get("plan_deviation", 0):]
                 if s.get("chapter") in recent_set]
+    # 履约 missed：check_fulfillment 逐次机检埋点（审阅报告 C-missed）
+    missed_chapters = {s.get("chapter") for s in ledger_mod.read_signals(repo, "fulfillment_missed")
+                       if s.get("missed") and s.get("chapter") in recent_set}
     metrics = {
         "check_block_rate": len(blocked_chapters) / n,
-        "missed_rate": 0.0,   # 履约 missed 由 check_fulfillment 产出，P1a 已埋 gate_block
+        "missed_rate": len(missed_chapters) / n,
         "leak_hit": leak_hits,
         "rhythm_debt": rhythm_debt,
-        "rerender_rate": max(render_counts - len(rerender_chapters), 0) / n
-                         if render_counts > len(rerender_chapters) else 0.0,
+        "rerender_rate": max(render_counts - len(rerender_chapters), 0) / n,
         "plan_deviation_rate": sum(1 for p in plan_dev if p.get("deviation")) / n,
     }
     return metrics
@@ -144,14 +170,35 @@ class BatchReport:
 def run_batch(repo: BookRepo, provider, *, on_halt=None) -> BatchReport:
     """执行批次：逐章 run_chapter（每章独立原子 commit）；熔断触发→完成当前章→停批。
 
+    全程持有写锁（单书仓单写者红线）；settle 事务经可重入 acquire 嵌套。
     resume 后（window_reset 记录存在）：熔断评估只看恢复点之后的信号，
     防 HALT 批次的旧拦截把新批次"同一问题连环放大"（§4.3 标定注意）。
     """
     state = load_batch_state(repo)
     if state is None:
         raise ValueError("批次未 ARMED（先 loom batch arm）")
-    state["state"] = BatchState.RUNNING.value
-    save_batch_state(repo, state)
+    dirty = repo.port.status_porcelain()
+    if dirty:
+        raise ValueError(f"工作区不干净，拒绝开批：{dirty[:3]}（先提交或清理）")
+    repo_lock.acquire(repo.port)
+    try:
+        state["state"] = BatchState.RUNNING.value
+        save_batch_state(repo, state)
+        return _run_locked(repo, provider, state, on_halt=on_halt)
+    finally:
+        repo_lock.release(repo.port)
+
+
+def _run_locked(repo: BookRepo, provider, state: dict, *, on_halt=None) -> BatchReport:
+    def _halt(ch: int, reason: str, trigger: str) -> BatchReport:
+        state["halted_at"] = ch
+        state["halt_reason"] = reason
+        state["state"] = BatchState.HALTED.value
+        save_batch_state(repo, state)
+        ledger_mod.append_signal(repo, "batch_breaker", {"chapter": ch, "trigger": trigger})
+        if on_halt:
+            on_halt(ch, reason)
+        return _report(repo, state)
 
     for ch in state["chapters"]:
         if ch in state["done"]:
@@ -161,7 +208,7 @@ def run_batch(repo: BookRepo, provider, *, on_halt=None) -> BatchReport:
         try:
             from loom.core.repo.schema import ChapterCardFM
 
-            fm, _body = split(repo.port.read_text(f"大纲/章纲/ch{ch:04d}.md"))
+            fm, _body = repo.read_fm(f"大纲/章纲/ch{ch:04d}.md")
             card = ChapterCardFM.model_validate(fm)
             result = run_chapter(repo, provider, card,
                                  contract=list(fm.get("contract", []) or []),
@@ -170,25 +217,14 @@ def run_batch(repo: BookRepo, provider, *, on_halt=None) -> BatchReport:
             state["render_stats"] = state.get("render_stats", {})
             state["render_stats"][str(ch)] = result.render_attempts
         except PipelineHalted as e:
-            state["halted_at"] = ch
-            state["halt_reason"] = f"章级重试耗尽：{e}"
-            state["state"] = BatchState.HALTED.value
-            save_batch_state(repo, state)
-            ledger_mod.append_signal(repo, "batch_breaker",
-                                     {"chapter": ch, "trigger": "pipeline_halt"})
-            if on_halt:
-                on_halt(ch, str(e))
-            return _report(repo, state)
+            return _halt(ch, f"章级重试耗尽：{e}", "pipeline_halt")
+        except (SettleRejected, repo_lock.RepoBusy) as e:
+            # 作者/其他进程中途写入等结算前置失败：转 HALTED 并记录原因（审阅报告 G）
+            return _halt(ch, f"结算被拒：{e}", "settle_rejected")
 
         breaker = evaluate_breakers(repo, since_signal=state.get("signal_window_reset", 0))
         if breaker["halt"] and state["done"]:
-            state["halted_at"] = ch
-            state["halt_reason"] = f"熔断触发：{breaker['triggered']}"
-            state["state"] = BatchState.HALTED.value
-            save_batch_state(repo, state)
-            ledger_mod.append_signal(repo, "batch_breaker",
-                                     {"chapter": ch, "trigger": breaker["triggered"]})
-            return _report(repo, state)
+            return _halt(ch, f"熔断触发：{breaker['triggered']}", breaker["triggered"])
         save_batch_state(repo, state)
 
     if len(state["done"]) == len(state["chapters"]):
@@ -211,7 +247,7 @@ def build_review_brief(repo: BookRepo, state: dict) -> list[str]:
     for ch in state["done"]:
         rel = f"定稿/摘要/ch{ch:04d}.md"
         if repo.port.exists(rel):
-            _fm, body = split(repo.port.read_text(rel))
+            _fm, body = repo.read_fm(rel)
             lines.append(f"- ch{ch:04d}：{' '.join(body.split())[:80]}")
     from loom.core.checks.checks import load_entries
 
@@ -234,7 +270,7 @@ def accept_batch(repo: BookRepo) -> dict:
 
 
 def resume_batch(repo: BookRepo) -> dict:
-    """HALT 断点恢复：清 halted_at，回到 RUNNING 续跑；记录信号窗口重置点。"""
+    """HALT 断点恢复：清 halted_at，回到 RUNNING 续跑；按类型记录信号窗口重置点。"""
     state = load_batch_state(repo)
     if state is None:
         raise ValueError("无批次状态")
@@ -243,8 +279,6 @@ def resume_batch(repo: BookRepo) -> dict:
     state["state"] = BatchState.RUNNING.value
     state["halted_at"] = None
     state["halt_reason"] = None
-    state["signal_window_reset"] = sum(
-        len(ledger_mod.read_signals(repo, t))
-        for t in ("gate_block", "review_disposition", "card_action", "settle_diff", "plan_deviation"))
+    state["signal_window_reset"] = _signal_offsets(repo)
     save_batch_state(repo, state)
     return state
