@@ -17,13 +17,13 @@ LEDGER_REL = "演化/run-ledger.jsonl"
 
 SIGNAL_TYPES = (
     "card_action", "settle_diff", "gate_block", "review_disposition",
-    "plan_deviation", "batch_breaker", "retcon",
+    "plan_deviation", "fulfillment_missed", "batch_breaker", "retcon",
 )
 
 
 def _append(port, rel: str, event: dict) -> None:
-    old = port.read_text(rel) if port.exists(rel) else ""
-    port.write_text(rel, old + json.dumps(event, ensure_ascii=False) + "\n")
+    # O_APPEND 增量写（审阅报告 I：全文件读-重写在高频 signals 下是 O(n²)）
+    port.append_text(rel, json.dumps(event, ensure_ascii=False) + "\n")
 
 
 def append_signal(repo: BookRepo, signal_type: str, payload: dict) -> None:

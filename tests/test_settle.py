@@ -122,3 +122,28 @@ def test_inmemory_port_same_semantics():
     assert result.commit == port.head_commit()
     assert port.status_porcelain() == []
     assert '"event": "settle"' in port.read_text("演化/run-ledger.jsonl")
+
+
+def test_ledger_events_written_without_chapter(book):
+    """审阅报告 A：scribe 以 chapter=None 结算，ledger_events 仍须入审计链。"""
+    events = ({"event": "scribe_call", "chapter": 7, "kind": "summary",
+               "usage": {"in": 100, "out": 50}},)
+    run(book.port, SettleInput(
+        message="scribe(007)\n\n摘要与事实提取入账\n",
+        files=[FileOp("定稿/摘要/ch0007.md", "---\nchapter: 7\n---\n摘要\n")],
+        chapter=None, ledger_events=events,
+    ))
+    ledger = book.port.read_text("演化/run-ledger.jsonl")
+    assert '"event": "scribe_call"' in ledger and '"chapter": 7' in ledger
+    assert '"event": "settle"' not in ledger  # 无 chapter 不落 settle 事件
+    assert "李浮舟" not in ledger  # usage 事件外无章级 settle 记录
+
+
+def test_dirty_lock_file_does_not_block_settle(book):
+    """审阅报告 G：写锁文件是机制自身产物，不构成脏工作区。"""
+    import json as _json
+    import os
+
+    book.port.write_text(".loom/lock.json", _json.dumps({"pid": os.getpid(), "started_at": 0}))
+    result = run(book.port, _input(1))
+    assert result.commit == book.port.head_commit()

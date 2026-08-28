@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -48,6 +49,7 @@ class RepoPort(Protocol):
     def exists(self, rel: str) -> bool: ...
     def list_files(self, rel_dir: str) -> list[str]: ...
     def write_text(self, rel: str, content: str) -> None: ...
+    def append_text(self, rel: str, content: str) -> None: ...
     def delete(self, rel: str) -> None: ...
     def head_commit(self) -> str | None: ...
     def status_porcelain(self) -> list[str]: ...
@@ -64,6 +66,18 @@ def _wpath(p: Path | str) -> str:
     if os.name == "nt" and not s.startswith("\\\\?\\"):
         s = "\\\\?\\" + s
     return s
+
+
+def _replace_with_retry(src: str, dst: str, attempts: int = 5) -> None:
+    """os.replace 对 Windows 瞬时锁错误（WinError 5 / PermissionError）自动重试。"""
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.05 * (i + 1))
 
 
 class GitRepoPort:
@@ -107,7 +121,14 @@ class GitRepoPort:
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp = target.with_name(target.name + ".loom-tmp")
         tmp.write_text(content, encoding="utf-8", newline="")
-        os.replace(_wpath(tmp), _wpath(target))
+        _replace_with_retry(_wpath(tmp), _wpath(target))
+
+    def append_text(self, rel: str, content: str) -> None:
+        """O_APPEND 追加（signals 高频写入不走全文件重写）。"""
+        target = self._abs(rel)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(_wpath(target), "a", encoding="utf-8", newline="") as f:
+            f.write(content)
 
     def delete(self, rel: str) -> None:
         target = self._abs(rel)

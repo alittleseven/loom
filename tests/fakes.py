@@ -5,6 +5,17 @@ import hashlib
 
 from loom.core.ports import FaultInjected
 
+# 镜像 BOOK_GITIGNORE（layout.py）：git 对这些路径不报 dirty，替身须同语义
+_IGNORED_PREFIXES = ("工作区/", ".cache/", ".loom/")
+_IGNORED_EXACT = ("演化/signals.jsonl",)
+_IGNORED_SUFFIX = ".loom-tmp"
+
+
+def _git_ignored(rel: str) -> bool:
+    return (rel.startswith(_IGNORED_PREFIXES)
+            or rel in _IGNORED_EXACT
+            or rel.endswith(_IGNORED_SUFFIX))
+
 
 class InMemoryRepoPort:
     """与 GitRepoPort 同语义的内存实现：文件树 + 提交树快照。
@@ -41,6 +52,9 @@ class InMemoryRepoPort:
     def write_text(self, rel: str, content: str) -> None:
         self.files[rel] = content
 
+    def append_text(self, rel: str, content: str) -> None:
+        self.files[rel] = self.files.get(rel, "") + content
+
     def delete(self, rel: str) -> None:
         self.files.pop(rel, None)
 
@@ -52,6 +66,8 @@ class InMemoryRepoPort:
     def status_porcelain(self) -> list[str]:
         lines: list[str] = []
         for rel in sorted(set(self.files) | set(self._committed)):
+            if _git_ignored(rel):
+                continue
             in_wt, in_ct = rel in self.files, rel in self._committed
             if in_wt and not in_ct:
                 lines.append(f"?? {rel}")

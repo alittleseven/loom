@@ -68,7 +68,7 @@ def run(port: RepoPort, plan: SettleInput) -> SettleResult:
     if dirty:
         raise SettleRejected(f"工作区不干净，拒绝结算：{dirty[:3]}")
 
-    # 哈希防串稿（C2）
+    # 哈希防串稿（C2）——锁内还会复查脏工作区（关闭检查与取锁之间的 TOCTOU 窗口）
     if plan.reviewed_sha256 is not None:
         if plan.draft_content is None:
             raise SettleRejected("提供了被审哈希但缺少送审草稿")
@@ -94,9 +94,17 @@ def run(port: RepoPort, plan: SettleInput) -> SettleResult:
 
     repo_lock.acquire(port)
     try:
+        # 锁内复查（关闭 TOCTOU 窗口）；写锁文件是本机制自身产物，不计入脏
+        # （porcelain 行格式：XY<空格>path）
+        dirty = [line for line in port.status_porcelain()
+                 if line[3:] != repo_lock.LOCK_REL]
+        if dirty:
+            raise SettleRejected(f"工作区不干净，拒绝结算：{dirty[:3]}")
+
+        # ledger_events 无条件入审计链（审阅报告 A：scribe 传 chapter=None，
+        # 若与 chapter 门控绑定，scribe/卷摘要的 usage 会系统性漏记）
+        lines = [json.dumps(e, ensure_ascii=False) for e in plan.ledger_events]
         if plan.chapter is not None:
-            old = port.read_text(LEDGER_REL) if port.exists(LEDGER_REL) else ""
-            lines = [json.dumps(e, ensure_ascii=False) for e in plan.ledger_events]
             lines.append(json.dumps(
                 {
                     "event": "settle",
@@ -105,6 +113,8 @@ def run(port: RepoPort, plan: SettleInput) -> SettleResult:
                 },
                 ensure_ascii=False,
             ))
+        if lines:
+            old = port.read_text(LEDGER_REL) if port.exists(LEDGER_REL) else ""
             plan.files.append(FileOp(LEDGER_REL, old + "\n".join(lines) + "\n"))
 
         blobs: dict[str, str | None] = {}

@@ -10,7 +10,7 @@ import difflib
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from loom.core.repo.frontmatter import dumps, dumps_json, split
 from loom.core.repo.layout import BookRepo
@@ -52,6 +52,7 @@ class ScribeResult:
     commit: str
     summary: str
     fingerprint: dict
+    usage: dict = field(default_factory=dict)
 
 
 def scribe_commit(repo: BookRepo, provider, chapter: int, draft: str) -> ScribeResult:
@@ -102,8 +103,12 @@ def scribe_commit(repo: BookRepo, provider, chapter: int, draft: str) -> ScribeR
         message=f"scribe({chapter:03d})\n\n摘要与事实提取入账\n",
         files=files, chapter=None, ledger_events=events,
     ))
-    return ScribeResult(commit=result.commit, summary=str(s.get("summary", "")),
-                        fingerprint=data["rolling"][f"ch{chapter:04d}"])
+    return ScribeResult(
+        commit=result.commit, summary=str(s.get("summary", "")),
+        fingerprint=data["rolling"][f"ch{chapter:04d}"],
+        usage={"summary": {"in": summary.usage_in, "out": summary.usage_out},
+               "extract": {"in": extract.usage_in, "out": extract.usage_out}},
+    )
 
 
 # ---- 金句收割闭环（diff>30% → tentative → 作者确认 → active）----
