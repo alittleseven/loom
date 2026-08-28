@@ -2,7 +2,8 @@
 
 fail-closed：机检重试 ≤2、评审阻断重渲染 ≤1，耗尽即 PipelineHalted（工作区原样保留）。
 结算两次落库：settle（正文+条目 touch+审计链）→ scribe（摘要+时间线+指纹）。
-signals 埋点随各环节同步（M3）：card_action / gate_block / review_disposition / settle_diff。
+signals 埋点随各环节同步（M3）：card_action / gate_block / review_disposition /
+settle_diff / plan_deviation / fulfillment_missed。
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from loom.core.prep.prep import compile_pack
 from loom.core.repo.frontmatter import dumps, split
 from loom.core.repo.layout import BookRepo, entry_rel
 from loom.core.repo.schema import ChapterCardFM, ManuscriptFM
+from loom.core.seam import SEAM_VERSION  # 缝协议版本单一来源（审阅报告 H）
 from loom.core.settle.transaction import FileOp, SettleInput
 from loom.core.settle.transaction import run as settle_run
 from loom.edge import prompts
@@ -26,7 +28,6 @@ from loom.edge import scribe as scribe_mod
 from loom.edge.renderer import render_chapter
 from loom.edge.reviewers import run_reviews
 
-SEAM_VERSION = "1"
 MANUSCRIPT_BODY_LIMIT = 20000
 
 
@@ -70,20 +71,26 @@ def project_decision_card(repo: BookRepo, card: ChapterCardFM, contract: list[st
 def _card_body(repo: BookRepo, chapter: int) -> str | None:
     rel = f"大纲/章纲/ch{chapter:04d}.md"
     if repo.port.exists(rel):
-        _fm, body = split(repo.port.read_text(rel))
+        _fm, body = repo.read_fm(rel)  # 经门面读取：seam 版本嗅探（§2.7）
         return body
     return None
 
 
 def _entry_ops(repo: BookRepo, card: ChapterCardFM, chapter: int) -> tuple[list[FileOp], list[str]]:
-    """条目结转：last_touched_ch 更新；到期条目兑付（$）；signs 供 commit 协议行。"""
+    """条目结转：last_touched_ch 更新；到期条目兑付（$）；signs 供 commit 协议行。
+
+    touch 未知条目 → PipelineHalted（审阅报告 E：fail-closed，承诺不得静默丢失）。
+    """
     ops: list[FileOp] = []
     signs: list[str] = []
     entries = load_entries(repo)
+    unknown = [eid for eid in card.touches if eid not in entries]
+    if unknown:
+        issues = [Issue("entry_form", "block", f"章纲卡 touch 的条目 {eid} 不存在于三本账", target=eid)
+                  for eid in unknown]
+        raise PipelineHalted(f"第 {chapter} 章章纲卡 touch 未知条目 {unknown}（fail-closed）", issues)
     for eid in card.touches:
-        e = entries.get(eid)
-        if e is None:
-            continue
+        e = entries[eid]
         rel = entry_rel(eid)
         fm, body = split(repo.port.read_text(rel))
         fm["last_touched_ch"] = chapter
@@ -118,17 +125,25 @@ def run_chapter(
         )
 
     def checks_for(draft: str) -> list[Issue]:
-        return run_checks(repo, ChapterContext(
+        issues = run_checks(repo, ChapterContext(
             chapter=chapter, draft=draft, manuscript=build_ms(draft),
             card=card, contract=contract,
         ))
+        # 履约 missed 埋点（审阅报告 C：missed_rate 熔断的数据源，逐次机检记录）
+        missed = [i.target for i in issues if i.rule == "fulfillment" and i.level == "block"]
+        ledger_mod.append_signal(repo, "fulfillment_missed",
+                                 {"chapter": chapter, "missed": missed})
+        return issues
 
     # ---- 渲染 + 机检（重试 ≤2；附错误反馈）----
     rr = None
     issues: list[Issue] = []
     feedback = ""
+    render_events: list[dict] = []   # 每次渲染一条事件（审阅报告 D：attempt usage 不丢）
     for attempt in range(3):
         rr = render_chapter(provider, pack, card_text, words=words, feedback=feedback)
+        render_events.append({"event": "render_call", "chapter": chapter, "model": rr.model,
+                              "usage": {"in": rr.usage_in, "out": rr.usage_out}})
         issues = checks_for(rr.draft)
         blocks = [i for i in issues if i.level == "block"]
         if not blocks:
@@ -144,17 +159,22 @@ def run_chapter(
 
     # ---- 双审（阻断 → 重渲染 ≤1 次）----
     total_renders = attempt + 1
+    review_events: list[dict] = []
     outcome = run_reviews(repo, provider, chapter, rr.draft, pack, contract)
+    review_events.append({"event": "review_call", "chapter": chapter, "usage": outcome.usage})
     if outcome.blocked:
         total_renders += 1
         review_feedback = "\n".join(f"- {i.get('desc')}（{i.get('quote', '')}）"
                                     for i in outcome.issues if i.get("severity") == "block")
         rr = render_chapter(provider, pack, card_text, words=words,
                             feedback=f"评审阻断，必须修正：\n{review_feedback}")
+        render_events.append({"event": "render_call", "chapter": chapter, "model": rr.model,
+                              "usage": {"in": rr.usage_in, "out": rr.usage_out}})
         issues = checks_for(rr.draft)
         if any(i.level == "block" for i in issues):
             raise PipelineHalted(f"第 {chapter} 章评审阻断后重渲染仍机检失败", issues)
         outcome = run_reviews(repo, provider, chapter, rr.draft, pack, contract)
+        review_events.append({"event": "review_call", "chapter": chapter, "usage": outcome.usage})
         if outcome.blocked:
             raise PipelineHalted(f"第 {chapter} 章评审阻断，重渲染 1 次后仍阻断", )
 
@@ -170,11 +190,7 @@ def run_chapter(
         draft_content=body,
         reviewed_sha256=outcome.draft_sha256,
         chapter=chapter,
-        ledger_events=(
-            {"event": "render_call", "chapter": chapter, "model": rr.model,
-             "usage": {"in": rr.usage_in, "out": rr.usage_out}},
-            {"event": "review_call", "chapter": chapter, "usage": outcome.usage},
-        ),
+        ledger_events=(*render_events, *review_events),
     ))
 
     # ---- scribe 第二次落库 ----
@@ -188,11 +204,14 @@ def run_chapter(
         "deviation": sorted(set(planned) ^ set(actual)),
     })
 
+    render_usage = {"in": sum(e["usage"]["in"] for e in render_events),
+                    "out": sum(e["usage"]["out"] for e in render_events)}
+    review_usage = {"in": sum(e["usage"]["in"] for e in review_events),
+                    "out": sum(e["usage"]["out"] for e in review_events)}
     return ChapterResult(
         chapter=chapter, commit=result.commit, scribe_commit=sc.commit,
         model=rr.model, render_attempts=total_renders,
         check_issues=len(issues), review_issues=len(outcome.issues),
-        usage={"render": {"in": rr.usage_in, "out": rr.usage_out},
-               "review": outcome.usage,
-               "scribe": {"summary": None, "extract": None}},
+        usage={"render": render_usage, "review": review_usage,
+               "scribe": sc.usage},
     )

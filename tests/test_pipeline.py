@@ -160,3 +160,62 @@ def test_hash_binding_prevents_stale_settle(tmp_path):
             files=[FileOp("定稿/正文/ch0001.md", "新稿")],
             draft_content="新稿", reviewed_sha256="deadbeef" * 8,
         ))
+
+
+def test_scribe_usage_reaches_ledger_and_cost_report(tmp_path):
+    """审阅报告 A：scribe（chapter=None）的 usage 进入审计链与成本电表。"""
+    book = _seed(tmp_path)
+    run_chapter(book, _provider(), _CARD, contract=["含:李浮舟"])
+    ledger = [json.loads(l) for l in book.port.read_text("演化/run-ledger.jsonl").splitlines() if l]
+    scribe_events = [e for e in ledger if e["event"] == "scribe_call"]
+    assert len(scribe_events) == 2 and all(e["usage"]["in"] > 0 for e in scribe_events)
+    report = ledger_mod.cost_report(book)
+    # render 1 + review 1 + scribe 2：scribe 调用不再漏记
+    assert report["per_chapter"][1]["calls"] == 4
+
+
+def test_all_attempt_usage_recorded(tmp_path):
+    """审阅报告 D：重渲染 attempt 与第二轮评审的 usage 全量入账。"""
+    book = _seed(tmp_path)
+    calls = {"n": 0}
+
+    def draft_fn(user):
+        calls["n"] += 1
+        return _DRAFT
+
+    provider = _provider(
+        manuscript=draft_fn,
+        review_fact=lambda user: {"issues": [{"severity": "block", "desc": "承接断裂", "quote": "..."}]}
+        if calls["n"] == 1 else {"issues": []},
+    )
+    result = run_chapter(book, provider, _CARD, contract=[])
+    assert result.render_attempts == 2
+    ledger = [json.loads(l) for l in book.port.read_text("演化/run-ledger.jsonl").splitlines() if l]
+    assert len([e for e in ledger if e["event"] == "render_call"]) == 2
+    assert len([e for e in ledger if e["event"] == "review_call"]) == 2
+    report = ledger_mod.cost_report(book)
+    assert report["per_chapter"][1]["calls"] == 6  # render2 + review2 + scribe2
+    assert result.usage["render"]["in"] == 20      # 2 次渲染 × fake usage (10, 5)
+    assert result.usage["review"]["in"] == 40      # 2 轮评审 × (fact 10 + edit 10)
+
+
+def test_unknown_touch_fails_closed_before_render(tmp_path):
+    """审阅报告 E：touch 不存在条目 → 渲染前拒绝，不烧 LLM、不落定稿。"""
+    book = _seed(tmp_path)
+    provider = _provider()
+    bad_card = ChapterCardFM(spec_stage="chapter_card", chapter=1, touches=["F-999"], scenes=2,
+                             hook_type="cliff", time_anchor="元启三年春", word_tier="setup")
+    with pytest.raises(PipelineHalted, match="未知条目"):
+        run_chapter(book, provider, bad_card, contract=[])
+    assert not any(c.schema_name == "manuscript" for c in provider.calls)
+    assert not book.port.exists("定稿/正文/ch0001.md")
+
+
+def test_fulfillment_missed_signal_embedded(tmp_path):
+    """审阅报告 C-missed：check_fulfillment 的 missed 逐次机检埋入 signals。"""
+    book = _seed(tmp_path)
+    provider = _provider(manuscript="他顿悟了，系统提示响起。一切平静结束。")
+    with pytest.raises(PipelineHalted):
+        run_chapter(book, provider, _CARD, contract=["含:李浮舟"])
+    sigs = ledger_mod.read_signals(book, "fulfillment_missed")
+    assert sigs and any(s["missed"] == ["含:李浮舟"] for s in sigs)
