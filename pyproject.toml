@@ -29,3 +29,10 @@ include = ["loom*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff.lint.per-file-ignores]
+# cache 重建 / doctor orphan 扫描对不可控源文件做容错跳过（fail-safe，doctor 出报告）
+"loom/core/cache.py" = ["BLE001", "S112"]
+"loom/core/doctor/doctor.py" = ["BLE001"]
+# 表驱动测试惯用 dict(**patch) 组装用例
+"tests/*" = ["C408"]
