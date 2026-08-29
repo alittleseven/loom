@@ -98,5 +98,5 @@ loom/                         ← 本仓库（工具本体）
 ## 注意事项
 
 - `spec_version: loom-1`：书仓格式字段变更走 spec 版本演进，不静默改
-- LICENSE（GPL-3.0-or-later 全文）在首次开源发布前补入
+- LICENSE（GPL-3.0-or-later 全文）已补入仓库根目录（2026-08-29，源 gnu.org canonical 文本）
 - 排期与验收硬门禁见基线方案 §6（P0→P1a→P1b→P2 关键路径；任一 Phase 超估 50% 触发范围重审）
