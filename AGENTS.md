@@ -25,7 +25,7 @@ loom init <dir> --genre <题材>   # 初始化 loom-1 书仓
 loom doctor <dir>                # 书仓体检
 ```
 
-- loom-1 格式规范（normative）：`docs/plans/loom-1-格式规范-v0.1.md`（P0 冻结：四张 schema + 写侧家族 + 豁免载体 A1 + 配比口径 A3 + run-ledger 落盘 A8 + 只增不改粒度 A11）；工作区技能 `.agents/skills/loom-1-spec` 为其常驻摘要（冲突以本规范为准，spec 变更须同步该技能）
+- loom-1 格式规范（normative）：`docs/plans/loom-1-格式规范.md`（v0.1 P0 冻结 + v0.2 增量：四张 schema + 写侧家族 + 豁免载体 A1（v0.2 含 target 绑定）+ 配比口径 A3 + run-ledger 落盘 A8 + 只增不改粒度 A11 + 记忆四态迁移规则）；工作区技能 `.agents/skills/loom-1-spec` 为其常驻摘要（冲突以本规范为准，spec 变更须同步该技能）
 - 模型路由基线：GLM-5.3-Flash（见 `docs/decisions/0001-模型路由基线-GLM-5.3-Flash.md`）
 
 ## 目录结构（2026-08-29 审阅后与实现对齐；审阅报告 四.1）
@@ -93,7 +93,7 @@ loom/                         ← 本仓库（工具本体）
 ## 文档归档
 
 - 四类子目录语义同全局 AGENTS.md：research / reports / plans / decisions
-- 已归档：plans/（v3.0 基线方案、loom-1 格式规范 v0.1、ZCode 工具链与环境准备清单）、reports/（2026-08-28 终审审阅报告、2026-08-29 架构与功能逻辑审阅报告）
+- 已归档：plans/（v3.0 基线方案、loom-1 格式规范（现 v0.2）、ZCode 工具链与环境准备清单、2026-08-29 spec v0.2 演进 + memory 命令 spec/plan）、reports/（2026-08-28 终审审阅报告、2026-08-29 架构与功能逻辑审阅报告）
 
 ## 注意事项
 

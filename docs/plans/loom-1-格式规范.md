@@ -1,8 +1,12 @@
-# loom-1 书仓格式规范 v0.1（P0 冻结版）
+# loom-1 书仓格式规范
 
-> spec_version: `loom-1`；本文件为格式的规范性定义（normative），实现（本仓库代码）是其参考实现。
-> 冻结日期：2026-08-29。冻结范围：目录树、book.yaml v0.1 字段、规划侧四张 schema、写侧 schema 家族（A2）、豁免载体（A1）、章节类型枚举与配比口径（A3）、run-ledger 落盘位置（A8）、只增不改粒度（A11）、commit 机器协议、结算协议、写入所有权矩阵、seam_version。
+> spec_version: `loom-1`；本文件为格式的规范性定义（normative），实现（本仓库代码）是其参考实现。当前版本 v0.2，版本谱系见下。
+> 初始冻结：2026-08-29（v0.1 P0 冻结）。冻结范围：目录树、book.yaml v0.1 字段、规划侧四张 schema、写侧 schema 家族（A2）、豁免载体（A1）、章节类型枚举与配比口径（A3）、run-ledger 落盘位置（A8）、只增不改粒度（A11）、commit 机器协议、结算协议、写入所有权矩阵、seam_version。
 > 演进规则：任何字段变更走 spec 版本演进（v0.x 增量 → v1.0 首个稳定版），实现按 `spec_version` 嗅探兼容，不静默改。open issues 见文末。
+>
+> **版本记录**
+> - **v0.1**（2026-08-29）：P0 冻结（范围见上）。
+> - **v0.2**（2026-08-29）：增量演进，`spec_version: loom-1` 字符串与 seam_version 不变，旧书仓零迁移——① §A1 豁免载体转正字段 `target`（豁免绑定的条目 id 或 id 列表；未绑定不豁免任何条目）；② §4.1 卷纲转正字段 `start_ch` / `end_ch`（卷章号范围，plan_gates 数据源）；③ §6.2 记忆四态迁移规则成文（作者专属迁移矩阵，无删除终态）。
 
 ---
 
@@ -73,6 +77,8 @@ front matter（plan_gates 六道全部数据源）：
 ---
 spec_stage: plan        # 固定值，供嗅探
 vol: 1
+start_ch: 1             # 卷首章号（v0.2 转正；缺省按 40 章/卷推算）
+end_ch: 40              # 卷末章号（v0.2 转正；plan_gates 期限/超期判定边界）
 climax_chapters: [12, 20]          # 高潮点章号列表（gate 3）
 entry_plan:                        # 条目计划（gate 1/2/5）
   - {id: F-001, action: 开启, due_chapter: 16}
@@ -134,7 +140,7 @@ options: []                   # 备选提案
 # 四段固定：## 盘面 / ## 提案 / ## 合同 / ## 备选
 ```
 
-**豁免规则（A1 定案）**：豁免**不是独立卡型**，是三张卡上的结构化字段 `touch_waiver`（章纲卡 / 决策卡 / 卷纲 `waivers[]` 计划级豁免）。字段三要素 `reason / approved_by / source` 缺一不可；`approved_by` 只能是 `author`——LLM 与内核无权豁免。机检遇 `touches` 为空时查 `touch_waiver`，两者皆无 → 违例。
+**豁免规则（A1 定案）**：豁免**不是独立卡型**，是三张卡上的结构化字段 `touch_waiver`（章纲卡 / 决策卡 / 卷纲 `waivers[]` 计划级豁免）。字段三要素 `reason / approved_by / source` 缺一不可；`approved_by` 只能是 `author`——LLM 与内核无权豁免。机检遇 `touches` 为空时查 `touch_waiver`，两者皆无 → 违例。卷纲 `waivers[]` 计划级豁免（v0.2）另可携带 `target`（豁免绑定的条目 id 或 id 列表）逐条声明豁免对象；未绑定或 `target` 为空的豁免不覆盖任何条目（gate5 fail-closed）。
 
 ## 5. 章节类型枚举与配比口径（A3 定案）
 
@@ -178,6 +184,17 @@ triggers: ["李浮舟", "浮舟"]   # 名册条目关键词触发器（prep 触�
 #   时间线：ch: N；book_time: "元启三年春"；event: "一句话事件"；present: [在场人物]（append-only 列，C3）
 #   角色：role: 主角|配角|反派；first_ch: N
 ```
+
+**记忆四态迁移规则（v0.2 成文）**：状态迁移仅限作者（人审），机检、LLM 与内核无权迁移；工具路径 `loom memory set`，走 settle 事务入 git（actor=author，`fix(手改)` 标题），迁移随事务落 run-ledger `memory_transition` 事件。允许的迁移：
+
+| from | 允许 to |
+|---|---|
+| tentative | active / outdated |
+| active | outdated / contradicted |
+| outdated | active |
+| contradicted | tentative（矛盾处置后重走人审） |
+
+无删除终态：条目不物理移除，纠错一律状态降级或复活（只增不改精神）。`paid` 为条目账本专属态，不在本矩阵。
 
 ### 6.3 文体指纹 `定稿/记忆/文体指纹.json`
 

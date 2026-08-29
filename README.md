@@ -4,7 +4,7 @@
 
 - **形态**：单一 Python CLI（命令 `loom`），单机优先 Windows；个人自用 + 开源（GPL-3.0-or-later）
 - **基线方案**：[docs/plans/织机Loom-最终方案-v3.0-终审整合版.md](docs/plans/织机Loom-最终方案-v3.0-终审整合版.md)（版本谱系 v1.0 → v2.0 → v3.0 见该文 §9）
-- **格式规范**：[docs/plans/loom-1-格式规范-v0.1.md](docs/plans/loom-1-格式规范-v0.1.md)（P0 冻结，normative）
+- **格式规范**：[docs/plans/loom-1-格式规范.md](docs/plans/loom-1-格式规范.md)（normative，当前 v0.2；spec_version `loom-1` 不变）
 - **动工前审阅**：[docs/reports/2026-08-28-织机Loom-v3.0-终审整合版审阅报告.md](docs/reports/2026-08-28-织机Loom-v3.0-终审整合版审阅报告.md)（通过；A1–A13 已在 P0 落实）
 
 ## 核心思路（30 秒版）
