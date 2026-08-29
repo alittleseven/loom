@@ -32,7 +32,7 @@ NGRAM_MAX_RATE = 0.02
 # P1a 形态（审阅报告 I）：词表含全角"？""！""……"等宽泛信号——章末任何问/叹号即过，
 # 无钩检测近似保底不误拦；语义收紧（按 hook_type 分型校验）待后续标定。
 HOOK_LEXICON = ("就在这时", "突然", "下一秒", "竟然", "谁也没想", "？", "！", "……", "秘密", "死")
-DEFAULT_VOL_CHAPTERS = 40  # 卷章数默认值（start_ch/end_ch 未声明时）
+DEFAULT_VOL_CHAPTERS = 40  # 卷章数默认值（spec v0.2：卷纲 start_ch/end_ch 缺省时）
 REVEALED_RE = re.compile(r"revealed@(\d+)")
 
 
@@ -332,12 +332,11 @@ def run_checks(repo: BookRepo, ctx: ChapterContext) -> list[Issue]:
     return issues
 
 
-# ---- plan_gates 六道（规划侧；start_ch/end_ch 为卷纲计划性扩展字段，spec v0.2 预登记）----
+# ---- plan_gates 六道（规划侧；start_ch/end_ch 已于 spec v0.2 转正为卷纲声明字段）----
 
 def _vol_range(vol: VolOutlineFM) -> tuple[int, int]:
-    extra = vol.model_extra or {}
-    end = int(extra.get("end_ch", 0))
-    start = int(extra.get("start_ch", end - DEFAULT_VOL_CHAPTERS + 1 if end else (vol.vol - 1) * DEFAULT_VOL_CHAPTERS + 1))
+    end = vol.end_ch or 0
+    start = vol.start_ch or (end - DEFAULT_VOL_CHAPTERS + 1 if end else (vol.vol - 1) * DEFAULT_VOL_CHAPTERS + 1)
     return start, end or start + DEFAULT_VOL_CHAPTERS - 1
 
 
@@ -382,16 +381,15 @@ def run_plan_gates(
     overdue = [e.id for e in entries.values()
                if e.status == "active" and e.due_ch is not None and e.due_ch < start_ch]
     covered = {i.id for i in vol.entry_plan if i.action == "兑付"}
-    # 豁免逐条绑定：waiver.target（扩展字段，str 或 list[str]）指明豁免的条目 id；
-    # 未绑定/类型非法的 target 一律视为未覆盖该条目（fail-closed），
-    # 一条豁免不得豁免全部超期条目（审阅报告 F / 第二轮 P2-3）
+    # 豁免逐条绑定：waiver.target（spec v0.2 声明字段，str 或 list[str]）指明豁免的
+    # 条目 id；未绑定（None）不豁免任何条目（fail-closed），类型非法已在解析期拒绝
+    # （schema 前移），一条豁免不得豁免全部超期条目（审阅报告 F / 第二轮 P2-3）
     waived: set[str] = set()
     for w in vol.waivers:
-        target = (w.model_extra or {}).get("target")
-        if isinstance(target, str):
-            waived.add(target)
-        elif isinstance(target, (list, tuple)):
-            waived.update(t for t in target if isinstance(t, str))
+        if isinstance(w.target, str):
+            waived.add(w.target)
+        elif w.target:
+            waived.update(w.target)
     for eid in overdue:
         if eid in covered or eid in waived:
             continue

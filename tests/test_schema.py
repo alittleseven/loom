@@ -136,3 +136,29 @@ def test_ratio_groups():
 def test_waiver_model_direct():
     w = Waiver(reason="双章连发合并钩子", approved_by="author", source="vol_outline")
     assert w.approved_by == "author"
+
+
+# ---- spec v0.2 转正字段：Waiver.target / 卷纲 start_ch·end_ch ----
+
+def test_waiver_target_declared_field():
+    w = Waiver.model_validate({"reason": "支线章", "approved_by": "author",
+                               "source": "vol_outline", "target": "S-031"})
+    assert w.target == "S-031"
+    w2 = Waiver.model_validate({"reason": "r", "approved_by": "author",
+                                "source": "vol_outline", "target": ["F-001", "F-002"]})
+    assert w2.target == ["F-001", "F-002"]
+    w3 = Waiver(reason="r", approved_by="author", source="vol_outline")
+    assert w3.target is None  # 未绑定 = 不豁免任何条目（gate5 fail-closed）
+
+
+def test_waiver_target_rejects_non_str_list():
+    with pytest.raises(ValidationError):  # 解析期拒绝（原 model_extra 运行时守卫前移）
+        Waiver.model_validate({"reason": "r", "approved_by": "author",
+                               "source": "vol_outline", "target": 123})
+
+
+def test_vol_outline_ch_range_declared():
+    v = VolOutlineFM.model_validate({**VOL_OK, "start_ch": 5, "end_ch": 44})
+    assert v.start_ch == 5 and v.end_ch == 44
+    v2 = VolOutlineFM.model_validate(VOL_OK)  # 可缺省，旧卷纲零改动可用
+    assert v2.start_ch is None and v2.end_ch is None

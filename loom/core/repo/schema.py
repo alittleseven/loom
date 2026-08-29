@@ -59,13 +59,14 @@ class LoomModel(BaseModel):
 class Waiver(LoomModel):
     """豁免载体（A1 定案）：不是独立卡型，是三张卡上的字段。
 
-    扩展约定（spec v0.2 转正候选，第二轮审阅 P2-3）：vol_outline 的计划级豁免
-    可携带额外字段 `target`（条目 id 或 id 列表），声明该豁免覆盖的具体条目；
-    未绑定/类型非法的 target 不豁免任何条目（gate5 fail-closed）。
+    `target` 为 spec v0.2 转正字段（原第二轮审阅 P2-3 扩展约定）：vol_outline
+    的计划级豁免可携带 `target`（条目 id 或 id 列表），声明该豁免覆盖的具体
+    条目；未绑定（None）的 target 不豁免任何条目（gate5 fail-closed）。
     """
     reason: str = Field(min_length=1)
     approved_by: Literal["author"]  # 只有作者有权豁免
     source: Literal["decision_card", "chapter_card", "vol_outline"]
+    target: str | list[str] | None = None  # v0.2 转正：豁免绑定的条目，None=未绑定
 
 
 # ---- book.yaml（§3，v0.1 冻结字段）----
@@ -108,6 +109,10 @@ class VolOutlineFM(LoomModel):
     chapter_types: dict[str, ChapterType] = Field(default_factory=dict)
     rhythm: RhythmBudget
     waivers: list[Waiver] = Field(default_factory=list)  # 计划级豁免（A1，gate 5）
+    # spec v0.2 转正（原 checks 计划性扩展字段）：卷章号范围（plan_gates 数据源）；
+    # 缺省时按 40 章/卷推算（checks.DEFAULT_VOL_CHAPTERS）
+    start_ch: int | None = None
+    end_ch: int | None = None
 
     @field_validator("entry_plan")
     @classmethod
