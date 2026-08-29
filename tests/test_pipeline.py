@@ -219,3 +219,43 @@ def test_fulfillment_missed_signal_embedded(tmp_path):
         run_chapter(book, provider, _CARD, contract=["含:李浮舟"])
     sigs = ledger_mod.read_signals(book, "fulfillment_missed")
     assert sigs and any(s["missed"] == ["含:李浮舟"] for s in sigs)
+
+
+def test_halt_usage_recorded_check_exhausted(tmp_path):
+    """第二轮审阅 P1-1：机检重试耗尽的 halt 章，3 次渲染 usage 补记入成本电表。"""
+    book = _seed(tmp_path)
+    provider = _provider(manuscript="他顿悟了，系统提示响起。一切平静结束。")
+    with pytest.raises(PipelineHalted, match="机检重试耗尽"):
+        run_chapter(book, provider, _CARD, contract=[])
+    halts = ledger_mod.read_signals(book, "pipeline_halt")
+    assert len(halts) == 1 and halts[0]["halt"] == "check_exhausted"
+    events = halts[0]["usage_events"]
+    assert len(events) == 3 and all(e["event"] == "render_call" for e in events)
+    report = ledger_mod.cost_report(book)
+    assert report["per_chapter"][1]["in"] == 30      # 3 次 × fake usage (10, 5)
+    assert report["per_chapter"][1]["calls"] == 3
+    # 工作区保持干净（补记账不经 settle，不弄脏已跟踪文件）
+    assert book.port.status_porcelain() == []
+
+
+def test_halt_usage_recorded_review_blocked_twice(tmp_path):
+    """第二轮审阅 P1-1：评审两次阻断的 halt 章，渲染+评审 usage 全量补记。"""
+    book = _seed(tmp_path)
+
+    def draft_fn(user):
+        return _DRAFT
+
+    provider = _provider(
+        manuscript=draft_fn,
+        review_fact=lambda user: {"issues": [{"severity": "block", "desc": "承接断裂", "quote": "..."}]},
+    )
+    with pytest.raises(PipelineHalted, match="评审阻断"):
+        run_chapter(book, provider, _CARD, contract=[])
+    halts = ledger_mod.read_signals(book, "pipeline_halt")
+    assert len(halts) == 1 and halts[0]["halt"] == "review_still_blocked"
+    events = halts[0]["usage_events"]
+    assert len([e for e in events if e["event"] == "render_call"]) == 2
+    assert len([e for e in events if e["event"] == "review_call"]) == 2
+    report = ledger_mod.cost_report(book)
+    assert report["per_chapter"][1]["in"] == 60      # render 2×10 + review 2×20
+    assert report["per_chapter"][1]["calls"] == 4

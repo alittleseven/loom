@@ -3,7 +3,7 @@
 fail-closed：机检重试 ≤2、评审阻断重渲染 ≤1，耗尽即 PipelineHalted（工作区原样保留）。
 结算两次落库：settle（正文+条目 touch+审计链）→ scribe（摘要+时间线+指纹）。
 signals 埋点随各环节同步（M3）：card_action / gate_block / review_disposition /
-settle_diff / plan_deviation / fulfillment_missed。
+settle_diff / plan_deviation / fulfillment_missed / pipeline_halt（halt 章 usage 补记）。
 """
 from __future__ import annotations
 
@@ -140,6 +140,19 @@ def run_chapter(
     issues: list[Issue] = []
     feedback = ""
     render_events: list[dict] = []   # 每次渲染一条事件（审阅报告 D：attempt usage 不丢）
+    review_events: list[dict] = []
+
+    def _halt(reason: str, halt_kind: str, halt_issues: list[Issue]) -> PipelineHalted:
+        # halt 章的已发生 usage 补记账（第二轮审阅 P1-1）：失败章常是全批次最贵的章。
+        # 不直接写 run-ledger（会弄脏已跟踪文件、卡死后续 settle），并入 signals，
+        # 由 ledger.cost_report 折算。
+        if render_events or review_events:
+            ledger_mod.append_signal(repo, "pipeline_halt", {
+                "chapter": chapter, "halt": halt_kind,
+                "usage_events": [*render_events, *review_events],
+            })
+        return PipelineHalted(reason, halt_issues)
+
     for attempt in range(3):
         rr = render_chapter(provider, pack, card_text, words=words, feedback=feedback)
         render_events.append({"event": "render_call", "chapter": chapter, "model": rr.model,
@@ -152,14 +165,13 @@ def run_chapter(
     else:
         for i in issues:
             ledger_mod.append_signal(repo, "gate_block", {"chapter": chapter, **i.five_tuple()})
-        raise PipelineHalted(f"第 {chapter} 章机检重试耗尽（fail-closed）", issues)
+        raise _halt(f"第 {chapter} 章机检重试耗尽（fail-closed）", "check_exhausted", issues)
 
     for i in issues:  # 全量埋点（含 warn；作者可在 P4 标误报）
         ledger_mod.append_signal(repo, "gate_block", {"chapter": chapter, **i.five_tuple()})
 
     # ---- 双审（阻断 → 重渲染 ≤1 次）----
     total_renders = attempt + 1
-    review_events: list[dict] = []
     outcome = run_reviews(repo, provider, chapter, rr.draft, pack, contract)
     review_events.append({"event": "review_call", "chapter": chapter, "usage": outcome.usage})
     if outcome.blocked:
@@ -172,11 +184,13 @@ def run_chapter(
                               "usage": {"in": rr.usage_in, "out": rr.usage_out}})
         issues = checks_for(rr.draft)
         if any(i.level == "block" for i in issues):
-            raise PipelineHalted(f"第 {chapter} 章评审阻断后重渲染仍机检失败", issues)
+            raise _halt(f"第 {chapter} 章评审阻断后重渲染仍机检失败",
+                        "review_rerender_check_fail", issues)
         outcome = run_reviews(repo, provider, chapter, rr.draft, pack, contract)
         review_events.append({"event": "review_call", "chapter": chapter, "usage": outcome.usage})
         if outcome.blocked:
-            raise PipelineHalted(f"第 {chapter} 章评审阻断，重渲染 1 次后仍阻断", )
+            raise _halt(f"第 {chapter} 章评审阻断，重渲染 1 次后仍阻断",
+                        "review_still_blocked", [])
 
     # ---- 结算（正文 + 条目 touch + 审计链；哈希防串稿绑定）----
     body = rr.draft[:MANUSCRIPT_BODY_LIMIT]

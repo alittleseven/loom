@@ -17,7 +17,8 @@ LEDGER_REL = "演化/run-ledger.jsonl"
 
 SIGNAL_TYPES = (
     "card_action", "settle_diff", "gate_block", "review_disposition",
-    "plan_deviation", "fulfillment_missed", "batch_breaker", "retcon",
+    "plan_deviation", "fulfillment_missed", "batch_breaker", "pipeline_halt",
+    "retcon",
 )
 
 
@@ -58,17 +59,30 @@ def read_ledger(repo: BookRepo) -> list[dict]:
 
 
 def cost_report(repo: BookRepo) -> dict:
-    """成本电表：逐章 token 聚合（usage 记录在 ledger 事件里）。"""
+    """成本电表：逐章 token 聚合。
+
+    来源一：run-ledger 事件（render/review/scribe_call 的 usage）；
+    来源二（第二轮审阅 P1-1）：halt 章的 usage 走 pipeline_halt 信号补记——
+    halt 不产生 settle 事务，直接写 run-ledger 会弄脏已跟踪文件、卡死后续
+    resume/next 的 settle，故并入 gitignored 的 signals，由本函数折算。
+    """
     per_chapter: dict[int, dict[str, int]] = {}
-    for event in read_ledger(repo):
-        usage = event.get("usage")
-        if not usage:
-            continue
-        ch = int(event.get("chapter", 0))
+
+    def _fold(usage: dict, ch: int) -> None:
         bucket = per_chapter.setdefault(ch, {"in": 0, "out": 0, "calls": 0})
         bucket["in"] += int(usage.get("in", 0))
         bucket["out"] += int(usage.get("out", 0))
         bucket["calls"] += 1
+
+    for event in read_ledger(repo):
+        usage = event.get("usage")
+        if usage:
+            _fold(usage, int(event.get("chapter", 0)))
+    for halt in read_signals(repo, "pipeline_halt"):
+        for ev in halt.get("usage_events", []):
+            usage = ev.get("usage")
+            if usage:
+                _fold(usage, int(ev.get("chapter", halt.get("chapter", 0))))
     total_in = sum(b["in"] for b in per_chapter.values())
     total_out = sum(b["out"] for b in per_chapter.values())
     return {"per_chapter": per_chapter, "total_in": total_in, "total_out": total_out,
