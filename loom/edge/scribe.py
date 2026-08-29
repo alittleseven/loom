@@ -119,7 +119,11 @@ def _para_set(text: str) -> dict[str, str]:
 
 
 def harvest_candidates(repo: BookRepo, provider, chapter: int, draft: str, final: str) -> int:
-    """作者改稿后调用：与旧稿差异 >30%（相似度 <0.7）的段落 → LLM 分类 → tentative 进金句库。"""
+    """作者改稿后调用：与旧稿差异 >30%（相似度 <0.7）的段落 → LLM 分类 → tentative 进金句库。
+
+    入库走 scribe(chN) settle 事务（第二轮审阅 P1-2：直写已跟踪文件会弄脏工作区，
+    卡死下一次 settle）。
+    """
     draft_paras = _para_set(draft)
     final_paras = _para_set(final)
     changed: list[str] = []
@@ -131,6 +135,7 @@ def harvest_candidates(repo: BookRepo, provider, chapter: int, draft: str, final
         if best < 0.7:
             changed.append(para)
     count = 0
+    scenes: dict[str, tuple[dict, str]] = {}  # scene → (fm, body)，聚合后单事务落库
     for para in changed[:5]:  # 单章上限 5 条候选
         verdict = provider.complete_structured(
             tier="small", schema_name="golden",
@@ -138,22 +143,35 @@ def harvest_candidates(repo: BookRepo, provider, chapter: int, draft: str, final
         if not verdict.data.get("golden"):
             continue
         scene = str(verdict.data.get("scene", "default")) or "default"
-        rel = f"文风/金句库/{scene}.md"
-        fm, body = (split(repo.port.read_text(rel)) if repo.port.exists(rel)
-                    else ({"scene": scene, "lines": []}, ""))
+        if scene in scenes:
+            fm, body = scenes[scene]
+        elif repo.port.exists(f"文风/金句库/{scene}.md"):
+            fm, body = split(repo.port.read_text(f"文风/金句库/{scene}.md"))
+        else:
+            fm, body = ({"scene": scene, "lines": []}, "")
         lines = list(fm.get("lines", []) or [])
         if any(ln.get("text") == para for ln in lines):
             continue
         lines.append({"text": para, "status": "tentative", "source_ch": chapter})
         fm["scene"], fm["lines"] = scene, lines[-20:]  # LRU ≤20
-        repo.write_file(rel, dumps(fm, body), actor="scribe")
+        scenes[scene] = (fm, body)
         count += 1
+    if scenes:
+        from loom.core.settle.transaction import FileOp, SettleInput
+        from loom.core.settle.transaction import run as settle_run
+
+        files = [FileOp(f"文风/金句库/{scene}.md", dumps(fm, body), actor="scribe")
+                 for scene, (fm, body) in sorted(scenes.items())]
+        settle_run(repo.port, SettleInput(
+            message=f"scribe({chapter:03d})\n\n金句收割：{count} 条 tentative 入库\n",
+            files=files,
+        ))
     return count
 
 
 
 def confirm_golden(repo: BookRepo, scene: str, index: int) -> bool:
-    """作者确认：tentative → active（作者命令，actor=author）。"""
+    """作者确认：tentative → active（fix(手改) settle 事务落库，工作区保持干净）。"""
     rel = f"文风/金句库/{scene}.md"
     if not repo.port.exists(rel):
         return False
@@ -162,7 +180,13 @@ def confirm_golden(repo: BookRepo, scene: str, index: int) -> bool:
     if 0 <= index < len(lines) and lines[index].get("status") == "tentative":
         lines[index]["status"] = "active"
         fm["lines"] = lines
-        repo.write_file(rel, dumps(fm, body), actor="author")
+        from loom.core.settle.transaction import FileOp, SettleInput
+        from loom.core.settle.transaction import run as settle_run
+
+        settle_run(repo.port, SettleInput(
+            message=f"fix(手改)\n\n金句确认：{scene}[{index}] → active\n",
+            files=[FileOp(rel, dumps(fm, body), actor="author")],
+        ))
         return True
     return False
 
