@@ -30,7 +30,7 @@
 ```powershell
 pip install -e ".[dev]"          # 安装（Python ≥3.13）
 copy .env.example .env           # 填入 API Key（严禁提交）
-pytest                           # 126 项测试
+pytest                           # 153 项测试
 ruff check .                     # Lint
 
 loom init 我的书 --genre 都市异能   # 建书仓
