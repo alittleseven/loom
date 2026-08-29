@@ -94,7 +94,7 @@ def _entries_top(entries: dict, n: int = 5) -> list[str]:
 
 def _book_map(repo: BookRepo, chapter: int, entries: dict) -> str:
     """Book Map 完整版（审阅报告 I：替换只挂最早卷号的骨架版）。"""
-    from loom.enhance import book_map_full
+    from loom.core.prep.bookmap import book_map_full
 
     return book_map_full(repo, chapter, entries=entries)
 

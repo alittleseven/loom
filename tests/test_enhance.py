@@ -1,15 +1,10 @@
 """P5 测试：L0 骨架、Book Map 完整版、成本面板、300 章合成压测（pack 恒定）。"""
 from __future__ import annotations
 
+from loom.core.prep.bookmap import book_map_full, build_l0_skeleton
 from loom.core.repo.frontmatter import dumps
 from loom.core.repo.layout import init_book
-from loom.enhance import (
-    book_map_full,
-    build_l0_skeleton,
-    cost_dashboard,
-    pack_constant_check,
-    synth_book,
-)
+from loom.enhance import cost_dashboard, pack_constant_check, synth_book
 
 
 def _seed(tmp_path):

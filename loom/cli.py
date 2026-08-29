@@ -48,18 +48,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def cmd_next(args: argparse.Namespace) -> int:
     """单章写作环：决策卡 → prep → 渲染 → 机检 → 双审 → 结算 → scribe。"""
-    from loom.core.config import build_chain, find_env_files, load_env
     from loom.core.ports import GitRepoPort
     from loom.core.repo.frontmatter import split
     from loom.core.repo.layout import BookRepo
     from loom.core.repo.schema import ChapterCardFM
-    from loom.edge.client.http import HTTPProvider
     from loom.pipeline import run_chapter
 
     root = Path(args.path).absolute()
     book = BookRepo(GitRepoPort(root))
-    env = load_env(*find_env_files(root))
-    provider = HTTPProvider(build_chain(env))
+    provider = _make_provider(root)
     rel = f"大纲/章纲/ch{args.chapter:04d}.md"
     fm, _body = split(book.port.read_text(rel))
     card = ChapterCardFM.model_validate(fm)
@@ -266,13 +263,9 @@ def cmd_volsummary(args: argparse.Namespace) -> int:
 def cmd_enhance(args: argparse.Namespace) -> int:
     """P5 工具入口：l0 全书骨架 / bookmap 完整版 / synth 合成压测 / packcheck 恒定检查。"""
     from loom.core.ports import GitRepoPort
+    from loom.core.prep.bookmap import book_map_full, build_l0_skeleton
     from loom.core.repo.layout import BookRepo
-    from loom.enhance import (
-        book_map_full,
-        build_l0_skeleton,
-        pack_constant_check,
-        synth_book,
-    )
+    from loom.enhance import pack_constant_check, synth_book
 
     root = Path(args.path).absolute()
     book = BookRepo(GitRepoPort(root))
@@ -393,4 +386,22 @@ def main(argv: list[str] | None = None) -> None:
     _utf8_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
-    raise SystemExit(args.func(args))
+    from loom.core.repo.lock import RepoBusy
+    from loom.core.settle.transaction import SettleRejected
+    from loom.edge.client.http import ProviderError
+    from loom.pipeline import PipelineHalted
+    from loom.planning import PlanRejected
+
+    # 域异常 → 可读结论 + 退出码 1（第二轮审阅 P2-4：不向用户裸抛 traceback；
+    # 未预期异常仍保留 traceback 便于定位）
+    try:
+        code = args.func(args)
+    except (PipelineHalted, PlanRejected) as e:
+        print(f"[loom] {e}", file=sys.stderr)
+        for issue in getattr(e, "issues", [])[:5]:
+            print(f"  - [{issue.rule}] {issue.msg}", file=sys.stderr)
+        raise SystemExit(1)
+    except (SettleRejected, RepoBusy, ProviderError) as e:
+        print(f"[loom] {e}", file=sys.stderr)
+        raise SystemExit(1)
+    raise SystemExit(code)

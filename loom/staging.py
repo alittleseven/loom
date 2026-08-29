@@ -131,9 +131,12 @@ def compute_breakers(repo: BookRepo, window: int = WINDOW,
     plan_dev = [s for s in ledger_mod.read_signals(repo, "plan_deviation")[
                     offsets.get("plan_deviation", 0):]
                 if s.get("chapter") in recent_set]
-    # 履约 missed：check_fulfillment 逐次机检埋点（审阅报告 C-missed）
-    missed_chapters = {s.get("chapter") for s in ledger_mod.read_signals(repo, "fulfillment_missed")
-                       if s.get("missed") and s.get("chapter") in recent_set}
+    # 履约 missed：check_fulfillment 逐次机检埋点（审阅报告 C-missed）。
+    # 同样按 resume offset 切片（第二轮审阅 P2-1）：missed 是窗口重置要屏蔽的
+    # "旧批次同一问题"，否则 resume 后旧章 missed 仍会立即触发熔断。
+    missed_chapters = {s.get("chapter") for s in ledger_mod.read_signals(
+        repo, "fulfillment_missed")[offsets.get("fulfillment_missed", 0):]
+        if s.get("missed") and s.get("chapter") in recent_set}
     metrics = {
         "check_block_rate": len(blocked_chapters) / n,
         "missed_rate": len(missed_chapters) / n,

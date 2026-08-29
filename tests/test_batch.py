@@ -109,19 +109,25 @@ def test_signal_window_reset_per_type(tmp_path):
     ledger_mod.append_signal(book, "gate_block", {"chapter": 1, "kind": "block", "rule": "x"})
     ledger_mod.append_signal(book, "plan_deviation", {"chapter": 1, "deviation": ["F-001"]})
     ledger_mod.append_signal(book, "plan_deviation", {"chapter": 1, "deviation": []})
+    ledger_mod.append_signal(book, "fulfillment_missed", {"chapter": 1, "missed": ["含:李浮舟"]})
     m0 = compute_breakers(book)
     # rate 按章计（n=1）：同章两条 plan_deviation（一真一空）→ 该章记 1
     assert m0["check_block_rate"] == 1.0 and m0["plan_deviation_rate"] == 1.0
+    assert m0["missed_rate"] == 1.0
 
     offsets = _signal_offsets(book)
     assert offsets["gate_block"] == 1 and offsets["plan_deviation"] == 2
+    assert offsets["fulfillment_missed"] == 1
     m1 = compute_breakers(book, since_signal=offsets)  # 重置后旧信号不可见
     assert m1["check_block_rate"] == 0.0 and m1["plan_deviation_rate"] == 0.0
+    assert m1["missed_rate"] == 0.0  # 第二轮审阅 P2-1：missed 同样受窗口重置约束
 
     # 新信号恢复可见（旧实现按跨类总和切 gate_block，会把新信号一并屏蔽）
     ledger_mod.append_signal(book, "gate_block", {"chapter": 1, "kind": "block", "rule": "leak"})
+    ledger_mod.append_signal(book, "fulfillment_missed", {"chapter": 1, "missed": ["含:李浮舟"]})
     m2 = compute_breakers(book, since_signal=offsets)
     assert m2["check_block_rate"] == 1.0 and m2["leak_hit"] == 1
+    assert m2["missed_rate"] == 1.0
     # 旧版 int offset 兼容读取（按 gate_block 单类型解释）
     assert compute_breakers(book, since_signal=1)["check_block_rate"] == 1.0
 

@@ -35,6 +35,16 @@ def test_repo_port_double_conformance():
     assert isinstance(InMemoryRepoPort(), RepoPort)  # runtime protocol check
 
 
+def test_core_never_imports_package_root_modules():
+    """第二轮审阅 P2-2：core 不得反向依赖包根模块（依赖方向恒为 根→core）。"""
+    banned = ("loom.enhance", "loom.pipeline", "loom.staging", "loom.planning", "loom.cli")
+    for p in sorted(PKG_DIR.joinpath("core").rglob("*.py")):
+        src = p.read_text(encoding="utf-8")
+        for b in banned:
+            assert f"from {b}" not in src and f"import {b}" not in src, \
+                f"{p.relative_to(PKG_DIR)} 反向依赖 {b}"
+
+
 def test_llm_provider_fake_conformance():
     fake = FakeLLMProvider(scripts={"review": {"issues": []}})
     assert isinstance(fake, LLMProvider)

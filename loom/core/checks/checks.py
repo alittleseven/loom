@@ -383,12 +383,15 @@ def run_plan_gates(
                if e.status == "active" and e.due_ch is not None and e.due_ch < start_ch]
     covered = {i.id for i in vol.entry_plan if i.action == "兑付"}
     # 豁免逐条绑定：waiver.target（扩展字段，str 或 list[str]）指明豁免的条目 id；
-    # 未绑定 target 的计划级豁免不生效（审阅报告 F：一条豁免不得豁免全部超期条目）
+    # 未绑定/类型非法的 target 一律视为未覆盖该条目（fail-closed），
+    # 一条豁免不得豁免全部超期条目（审阅报告 F / 第二轮 P2-3）
     waived: set[str] = set()
     for w in vol.waivers:
         target = (w.model_extra or {}).get("target")
-        targets = [target] if isinstance(target, str) else list(target or [])
-        waived.update(str(t) for t in targets)
+        if isinstance(target, str):
+            waived.add(target)
+        elif isinstance(target, (list, tuple)):
+            waived.update(t for t in target if isinstance(t, str))
     for eid in overdue:
         if eid in covered or eid in waived:
             continue

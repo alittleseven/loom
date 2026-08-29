@@ -57,6 +57,12 @@ class LoomModel(BaseModel):
 # ---- 豁免载体（A1 定案）：不是独立卡型，是三张卡上的字段 ----
 
 class Waiver(LoomModel):
+    """豁免载体（A1 定案）：不是独立卡型，是三张卡上的字段。
+
+    扩展约定（spec v0.2 转正候选，第二轮审阅 P2-3）：vol_outline 的计划级豁免
+    可携带额外字段 `target`（条目 id 或 id 列表），声明该豁免覆盖的具体条目；
+    未绑定/类型非法的 target 不豁免任何条目（gate5 fail-closed）。
+    """
     reason: str = Field(min_length=1)
     approved_by: Literal["author"]  # 只有作者有权豁免
     source: Literal["decision_card", "chapter_card", "vol_outline"]

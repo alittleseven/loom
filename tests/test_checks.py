@@ -230,6 +230,22 @@ def test_gate5_waiver_must_bind_entry():
     assert not [i for i in run_plan_gates(vol1, entries, _profile(), []) if i.rule == "gate5_overdue"]
 
 
+def test_gate5_waiver_target_type_guard():
+    """第二轮审阅 P2-3：target 类型非法时不抛 TypeError，且不豁免任何条目。"""
+    entries = {"F-000": EntryFM(id="F-000", kind="伏笔", strength="high", status="active",
+                                opened_ch=1, due_ch=3)}
+    # target 为 int → 类型非法，视同未绑定，gate5 仍然拦截（fail-closed）
+    vol = _vol(start_ch=10, end_ch=40, waivers=[
+        {"reason": "x", "approved_by": "author", "source": "vol_outline", "target": 12345}])
+    blocks = [i for i in run_plan_gates(vol, entries, _profile(), []) if i.rule == "gate5_overdue"]
+    assert blocks and blocks[0].target == "F-000"
+    # 混合列表：合法 str 生效、非法项忽略 → F-000 被豁免
+    vol2 = _vol(start_ch=10, end_ch=40, waivers=[
+        {"reason": "y", "approved_by": "author", "source": "vol_outline",
+         "target": ["F-000", 7, None]}])
+    assert not [i for i in run_plan_gates(vol2, entries, _profile(), []) if i.rule == "gate5_overdue"]
+
+
 def test_gate6_ratio_redline():
     types = {f"ch{i:04d}": "main" for i in range(1, 9)}
     for i in range(1, 5):

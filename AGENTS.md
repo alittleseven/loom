@@ -40,7 +40,7 @@ loom/                         ← 本仓库（工具本体）
 │   ├── pipeline.py           # 单章写作环：决策卡→prep→渲染→机检→双审→结算→scribe
 │   ├── planning.py           # 规划环：plan_vol（六道门）+ plan_batch（章纲卡）
 │   ├── staging.py            # 批次状态机 + 七项熔断（AGENTS 规划的 core/staging 并入包根）
-│   ├── enhance.py            # P5 增强：L0 骨架/book_map_full/成本面板/合成压测
+│   ├── enhance.py            # P5 CLI 编排：synth 合成压测/packcheck/成本面板
 │   ├── core/                 # 确定性内核（零 LLM）
 │   │   ├── ports.py          #   RepoPort 协议 + GitRepoPort（长路径/故障注入/WinError5 重试）
 │   │   ├── seam.py           #   缝协议版本嗅探（SEAM_VERSION 单一来源）
@@ -48,7 +48,7 @@ loom/                         ← 本仓库（工具本体）
 │   │   ├── cache.py          #   .cache SQLite 索引
 │   │   ├── repo/             #   书仓读写、front matter、写入所有权矩阵 + 书仓写锁
 │   │   ├── legacy/           #   【GPL 隔离区】v6 移植零件（合同引擎/CSV 检索/…）
-│   │   ├── prep/             #   上下文编译器（pack 槽位 + Book Map）
+│   │   ├── prep/             #   上下文编译器（pack 槽位）+ bookmap（L0 骨架/Book Map）
 │   │   ├── checks/           #   机检十项 + plan_gates 六道（零 LLM）
 │   │   ├── settle/           #   原子事务 + 哈希防串稿 + run-ledger 落库
 │   │   ├── ledger/           #   run-ledger 事件链 + signals 埋点 + 成本电表
