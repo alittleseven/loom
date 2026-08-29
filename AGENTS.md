@@ -36,7 +36,7 @@ loom/                         ← 本仓库（工具本体）
 ├── pyproject.toml
 ├── loom/                     # Python 包根
 │   ├── cli.py                # 唯一入口（已落地：init/doctor/next/plan/batch/bench/
-│   │                         #   migrate/evolve/ledger/review/golden/volsummary/enhance）
+│   │                         #   migrate/evolve/ledger/review/golden/volsummary/enhance/memory）
 │   ├── pipeline.py           # 单章写作环：决策卡→prep→渲染→机检→双审→结算→scribe
 │   ├── planning.py           # 规划环：plan_vol（六道门）+ plan_batch（章纲卡）
 │   ├── staging.py            # 批次状态机 + 七项熔断（AGENTS 规划的 core/staging 并入包根）
@@ -52,6 +52,7 @@ loom/                         ← 本仓库（工具本体）
 │   │   ├── checks/           #   机检十项 + plan_gates 六道（零 LLM）
 │   │   ├── settle/           #   原子事务 + 哈希防串稿 + run-ledger 落库
 │   │   ├── ledger/           #   run-ledger 事件链 + signals 埋点 + 成本电表
+│   │   ├── memory.py         #   记忆四态纠错（spec v0.2 迁移规则，零 LLM）
 │   │   ├── migrate/          #   v6 → loom-1 迁移器
 │   │   └── doctor/           #   体检 + 修复卡
 │   ├── edge/                 # 智能边缘（全部 LLM 调用；单文件模块）

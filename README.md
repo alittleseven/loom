@@ -43,7 +43,7 @@ loom migrate 旧书目录 新书仓 --genre 末世求生     # v6 迁移
 
 ## 命令面
 
-`init` / `plan vol|batch` / `next` / `batch`（P3 状态机）/ `evolve`（P4 提案-快照）/ `bench` / `doctor` / `migrate` / `ledger` / `memory`（随用随补）
+`init` / `plan vol|batch` / `next` / `batch`（P3 状态机）/ `evolve`（P4 提案-快照）/ `bench` / `doctor` / `migrate` / `ledger` / `memory`（记忆四态纠错，spec v0.2）
 
 ## 红线（违反即打回）
 

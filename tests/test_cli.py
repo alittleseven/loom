@@ -114,3 +114,49 @@ def test_cli_friendly_error_on_halt(tmp_path, monkeypatch, capsys):
     assert e.value.code == 1
     err = capsys.readouterr().err
     assert "机检重试耗尽" in err and "Traceback" not in err
+
+
+def test_cli_memory_list_and_set(book, capsys):
+    """spec v0.2：memory list 盘点 / set 纠错走 settle；非法迁移可读报错退出码 1。"""
+    from loom.core.repo.frontmatter import dumps, split
+    from loom.core.settle.transaction import FileOp, SettleInput
+    from loom.core.settle.transaction import run as settle_run
+
+    root = str(book.port.root)
+    settle_run(book.port, SettleInput(
+        message="fix(手改)\n\n种子条目\n\n条目: -\n",
+        files=[FileOp("定稿/记忆/set-mem-a.md",
+                      dumps({"id": "set-mem-a", "status": "tentative"}, "内容\n"),
+                      actor="author")]))
+
+    # list：盘点 + 状态过滤
+    with pytest.raises(SystemExit) as e:
+        main(["memory", root, "list"])
+    assert e.value.code == 0
+    assert "set-mem-a" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as e:
+        main(["memory", root, "list", "--status", "active"])
+    assert e.value.code == 0
+    assert "无条目" in capsys.readouterr().out
+
+    # set：合法迁移落库，工作区干净
+    with pytest.raises(SystemExit) as e:
+        main(["memory", root, "set", "set-mem-a", "active", "--reason", "人审通过"])
+    assert e.value.code == 0
+    assert "已落库" in capsys.readouterr().out
+    fm, _ = split(book.port.read_text("定稿/记忆/set-mem-a.md"))
+    assert fm["status"] == "active"
+    assert book.port.status_porcelain() == []
+
+    # set：非法迁移 → 可读结论 + 退出码 1，不裸抛 traceback
+    with pytest.raises(SystemExit) as e:
+        main(["memory", root, "set", "set-mem-a", "tentative", "--reason", "r"])
+    assert e.value.code == 1
+    err = capsys.readouterr().err
+    assert "非法迁移" in err and "Traceback" not in err
+
+    # set：缺 reason → 可读拒绝
+    with pytest.raises(SystemExit) as e:
+        main(["memory", root, "set", "set-mem-a", "outdated"])
+    assert e.value.code == 1
+    assert "reason" in capsys.readouterr().err

@@ -2,9 +2,10 @@
 
 命令面（v3.0 方案 §5.1 + 审阅报告 四.2 消除"功能存在但不可达"）：
 已落地：init / doctor / next / plan / batch / bench / migrate / evolve / ledger /
-        review / golden（金句收割·确认）/ volsummary（卷摘要）/ enhance（P5 工具）
+        review / golden（金句收割·确认）/ volsummary（卷摘要）/ enhance（P5 工具）/
+        memory（记忆四态纠错，spec v0.2 迁移规则）
 规划中（随 Phase 补实现）：prep / render / check / settle（能力已并入 next 单章
-        闭环）/ memory（记忆四态纠错，待 spec 演进）
+        闭环）
 """
 from __future__ import annotations
 
@@ -288,6 +289,38 @@ def cmd_enhance(args: argparse.Namespace) -> int:
     return 0 if result["constant"] else 1
 
 
+def cmd_memory(args: argparse.Namespace) -> int:
+    """记忆四态纠错（spec v0.2）：list 只读盘点 / set 作者迁移走 settle 事务。"""
+    from loom.core.memory import MemoryTransitionError, list_entries, set_status
+    from loom.core.ports import GitRepoPort
+    from loom.core.repo.layout import BookRepo
+
+    book = BookRepo(GitRepoPort(Path(args.path).absolute()))
+    if args.action == "list":
+        entries = list_entries(book, status=args.status)
+        if not entries:
+            print("（无条目）")
+            return 0
+        for e in entries:
+            print(f"  [{e.status:<12}] {e.label}  {e.rel}")
+        print(f"共 {len(entries)} 条。")
+        return 0
+    if not args.entry or not args.new_status:
+        print("[loom] set 用法：loom memory <书仓> set <条目id|路径> <目标状态> --reason \"...\"",
+              file=sys.stderr)
+        return 1
+    if not args.reason:
+        print("[loom] 纠错必须给出 --reason（审计要求）", file=sys.stderr)
+        return 1
+    try:
+        commit = set_status(book, args.entry, args.new_status, args.reason)
+    except MemoryTransitionError as e:
+        print(f"[loom] {e}", file=sys.stderr)
+        return 1
+    print(f"记忆纠错已落库：{commit[:12]}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     from loom import __version__
 
@@ -378,6 +411,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_enh.add_argument("--to", dest="to_ch", type=int, default=300, help="结束探测章（packcheck）")
     p_enh.add_argument("--yes", action="store_true", help="确认提交合成数据（synth）")
     p_enh.set_defaults(func=cmd_enhance)
+
+    p_mem = sub.add_parser("memory", help="记忆四态纠错：list / set（spec v0.2 迁移规则）")
+    p_mem.add_argument("path", help="书仓目录")
+    p_mem.add_argument("action", choices=["list", "set"])
+    p_mem.add_argument("entry", nargs="?", help="条目 id 或相对路径（set）")
+    p_mem.add_argument("new_status", nargs="?", help="目标状态（set）")
+    p_mem.add_argument("--status", help="按状态过滤（list）")
+    p_mem.add_argument("--reason", help="纠错理由（set 必填，入审计链）")
+    p_mem.set_defaults(func=cmd_memory)
 
     return parser
 
