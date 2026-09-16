@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "peer": { "id": "webnovel-loom" },
+  "recall": { "peer_scope": "all" }
+}
