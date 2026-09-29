@@ -28,3 +28,6 @@ Desktop.ini
 # 本地临时
 tmp/
 *.log
+
+# opencode host runtime dir (node_modules, regenerated on demand)
+.opencode/
